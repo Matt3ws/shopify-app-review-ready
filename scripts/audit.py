@@ -258,6 +258,13 @@ def check_secrets_and_tokens(root: Path, files: list[Path]) -> None:
         text = read(f)
         if re.search(r"(req|request)\.(json|body)", text) and re.search(r"customer_?[iI]d|\bshop\b", text) and re.search(r"jwt\.sign|Access-Control-Allow-Origin['\"]?\s*[,:]\s*['\"]\*", text):
             add("FAIL", "storefront auth", "Storefront endpoint reads customer/shop from the body and signs tokens or allows any origin; take identity only from the App Proxy signature (logged_in_customer_id).", str(f.relative_to(root)))
+    if grep(files, r"tokenExchange\(", root) and grep(files, r"refreshToken|refresh_token", root) and not grep(files, r"migrateToExpiringToken", root):
+        add("INFO", "token migration", "No migrateToExpiringToken: installs from before expiring tokens keep a non-expiring token until they reinstall. Migrate in place on first use.")
+    # Server code only: the browser declining to retry a 401/403 is correct.
+    server_files = [f for f in files if not re.search(r"(^|/)(providers|components|hooks)/", str(f.relative_to(root)))]
+    lumped = grep(server_files, r"(===|==)\s*401\s*\|\|[^\n]*(===|==)\s*403|(===|==)\s*403\s*\|\|[^\n]*(===|==)\s*401", root)
+    if lumped:
+        add("WARN", "401 vs 403", f"401 and 403 are treated alike ({short(lumped, 3)}). A 403 (missing scope, protected customer data) triggers a token refresh that can't help, and a retry into the same 403. Refresh on 401 only.")
     env = root / "env.ts"
     if env.exists() and grep(files, r"accessToken|refreshToken", root) and "ENCRYPTION" not in read(env):
         add("WARN", "encryption at rest", "env.ts has no ENCRYPTION_KEY; access tokens (and customer data) should be encrypted at rest.", "env.ts")

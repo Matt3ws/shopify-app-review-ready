@@ -351,6 +351,54 @@ Each entry: **Requirement**, **Source**, what Shopify said, **Cause**, **Fix**,
 - Shopify Functions: Wasm must be at most 256 KB, and each input query has
   a complexity cap of 30. Deploy rejects either; CI can't see it.
 
+## 2026-06 → 09 · Many apps · moving to expiring offline tokens
+
+- **Source:** Shopify requirement (expiring offline tokens for public apps),
+  rolled out across Store Sync, Hide It; Checkout, the template and every app
+  built from it. These are the failures we hit doing it.
+- **Existing installs:** a reinstall isn't needed. Swap a stored
+  non-expiring token for an expiring one in place with
+  `shopify.auth.migrateToExpiringToken` (shopify-api) the first time it's
+  used. Rows with no refresh token are the ones to migrate.
+- **Concurrent refreshes retire each other's tokens.** The refresh token
+  rotates on every use, and two requests refreshing at once leave one holding a
+  dead token. Fix:
+  - Take a single-flight lock per shop (Redis, with an in-process fallback).
+  - After getting the lock, **re-read the token from the database**, since the
+    winner may already have rotated it.
+  - Refresh a few minutes before `expires`, so callers that lose the race can
+    keep using the current token.
+- **Cached clients hold a token.** A 5-minute pool of Admin clients kept the
+  old access token after a refresh. Every other request got a 401, refreshed
+  again, and "recovered" in bursts. Fix: invalidate cached clients at every
+  place a token is minted (refresh, migrate, exchange), across processes too
+  (Redis pub/sub).
+- **401 isn't 403.** 401 means the token was rejected, so refresh. 403 means
+  not permitted (a missing scope, or protected customer data not approved);
+  a refresh can't help, and lumping them together turned every 403 into a
+  refresh and a retry into the same 403.
+- **Dead token family.** A 401 from the refresh endpoint is terminal
+  (expired, superseded or revoked). Flag the shop `needsReauth`, stop
+  retrying, and exchange a new token on the next app open.
+- **Backoff, but not too long.** After a failed refresh, wait (e.g. 10
+  minutes) so a broken shop doesn't refresh on every request. If the current
+  token is already expired, retry within seconds instead: one timeout on the
+  token endpoint must not cost ten minutes of 401s.
+- **Idle shops.** Refresh tokens die after 90 days unused. A scheduled
+  keep-alive refreshes shops that haven't been active, or their webhooks and
+  jobs stop until a reinstall.
+- **Shopify's resilient refresh (2026-08):** the previous refresh token
+  stays usable until its replacement is first used (up to 30 days), so a lost
+  response can be recovered by replaying the stored token. Keep the guards
+  above anyway.
+- **Detect:**
+  - `tokenExchange` without `expiring: true`.
+  - No `migrateToExpiringToken`.
+  - A refresh with no lock, or no re-read after the lock.
+  - An Admin client cache with no invalidation on rotation.
+  - An auth-error check that matches 403 as well as 401.
+  - No keep-alive job.
+
 ## 2026-06 → 08 · App template · token and webhook lifecycle
 
 - **Source:** Shopify requirement plus own fixes; every app inherits the

@@ -56,8 +56,18 @@ on 2027-01-01, and Shopify rejects their API requests from 2027-04-01.
 - Access tokens last an hour; the refresh token **rotates on every use**.
 - Refresh dormant stores before the refresh token's **90-day** expiry, or
   webhooks and jobs stop until the merchant reinstalls.
-- Never exchange or refresh for the same store concurrently, and never
-  exchange on every request.
+- Never exchange or refresh for the same store concurrently (lock per shop,
+  re-read the token after taking the lock), and never exchange on every
+  request.
+- Migrate existing non-expiring tokens in place
+  (`shopify.auth.migrateToExpiringToken`); no reinstall needed.
+- Invalidate cached Admin clients wherever a token is minted, or the pool
+  keeps serving the retired one.
+- Treat 401 as "refresh", 403 as "not permitted" (scope or protected
+  customer data). A 401 from the refresh endpoint is terminal: flag the shop
+  and re-exchange on the next open.
+- What went wrong for us while migrating is in
+  [rejections.md](rejections.md) ("moving to expiring offline tokens").
 
 ## Run Shopify's own checks
 
