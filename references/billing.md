@@ -116,6 +116,26 @@ Partner API answers for both.
 - After the redirect, query the Partner API to confirm, and show the plan
   Shopify reports rather than announcing an upgrade.
 
+## What the plan page may show (1.2.3)
+
+- **Only plans the merchant can choose and approve through Shopify.** No
+  "Contact us", "Contact sales", "Book a call" or custom-quote card, not even
+  as the last card. Shopify rejected Backup Hero's Enterprise card for this.
+  Enterprise or custom deals are **private plans** you assign in the Partner
+  Dashboard; describe them in the listing's "Description of additional
+  charges".
+- A shop on a private plan must still see it as its current plan, with its
+  limits; just don't offer it to everyone.
+- Upgrade and downgrade must work from the app without contacting support:
+  every card's button goes to Shopify's plan page.
+- The limits on a card or status line must be what the merchant actually
+  gets. Don't show a paid plan's limits to a shop with no plan, and if
+  enforcement is off during review, don't promise caps the app doesn't apply.
+- The plan page has to work in **production**: in Next.js, render it per
+  request. A billing page prerendered at build time froze "Plan changes are
+  unavailable" into Backup Hero, because the build had no app handle (flagged
+  under 1.2.2).
+
 ## Testing plans, and the reviewer's store
 
 - Development stores test App Pricing **at no charge**, but which plans

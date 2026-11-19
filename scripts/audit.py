@@ -336,6 +336,25 @@ def check_translations(root: Path) -> None:
                 add("WARN", "translations", f"{name} is missing {len(missing)} keys from en.json (e.g. {sorted(missing)[:3]}).", f"translations/{name}")
 
 
+def check_plan_page(root: Path, files: list[Path]) -> None:
+    billing_ui = [f for f in files if re.search(r"billing|pricing|plan", str(f.relative_to(root)), re.I) and f.suffix in (".tsx", ".jsx", ".ts")]
+    translations = list((root / "translations").glob("*.json")) if (root / "translations").is_dir() else []
+    rx = re.compile(r"contact (us|sales)|book a (call|demo)|kontakt os|request a quote|mailto:", re.I)
+    hits = [f"{f.relative_to(root)}:{n}" for f in billing_ui for n, line in enumerate(read(f).splitlines(), 1) if rx.search(line) and not line.lstrip().startswith(("//", "*", "/*", "{/*"))]
+    plan_keys = [h for h in grep(translations, r"\"[^\"]*(enterprise|contact|custom)[^\"]*\"\s*:\s*\"[^\"]*(contact|kontakt|book|quote|tilbud)", root, re.I)]
+    if hits or plan_keys:
+        add("WARN", "1.2.3 plan cards", f"Contact/quote wording near the plans ({short(hits + plan_keys, 4)}). Every plan on the plan page must be choosable and approvable through Shopify; Shopify rejected a 'Contact us' Enterprise card. Use a private plan plus the listing's additional-charges text.")
+    app = root / "app"
+    if app.is_dir():
+        for page in app.rglob("page.tsx"):
+            rel = str(page.relative_to(root))
+            if not re.search(r"billing|pricing|plan", rel, re.I):
+                continue
+            text = read(page)
+            if re.search(r"\benv\.|process\.env", text) and not re.search(r"force-dynamic|connection\(|headers\(|cookies\(|searchParams|revalidate\s*=\s*0", text):
+                add("WARN", "prerendered billing page", "Billing page reads env but nothing makes it render per request; Next.js may prerender it at build, where the runtime env (app handle) is missing. Shopify flagged Backup Hero for this under 1.2.2.", rel)
+
+
 def check_webhook_echoes(root: Path, files: list[Path]) -> None:
     subscribes = bool(grep(files, r"PRODUCTS_UPDATE|products/update", root)) or "products/update" in read(root / "shopify.app.toml")
     writes = grep(files, r"\b(productSet|productUpdate|productVariantsBulkUpdate|metafieldsSet)\b", root)
@@ -379,6 +398,7 @@ def main() -> int:
     check_translations(root)
     check_compliance_handlers(root, files)
     check_webhook_echoes(root, files)
+    check_plan_page(root, files)
 
     order = {"FAIL": 0, "CHECK": 1, "WARN": 2, "INFO": 3}
     findings.sort(key=lambda f: order[f.level])

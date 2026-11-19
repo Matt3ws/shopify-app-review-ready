@@ -54,6 +54,56 @@ Each entry: **Requirement**, **Source**, what Shopify said, **Cause**, **Fix**,
   costs weeks, not days. Reproduce each one on production before
   resubmitting, and say per requirement what changed.
 
+## 2026-11 · Backup Hero · 1.2.3 · "Contact us" Enterprise plan rejected
+
+- **Source:** App Review rejection (requirement 1.2.3).
+- Shopify's point: every plan on the app's plan page must be one the merchant
+  can choose and approve **through Shopify themselves**. An Enterprise card
+  with a "Contact us" button (mailto) asks the merchant to arrange pricing
+  outside Shopify.
+- **Fix:** removed the card and its copy. Enterprise became a **private**
+  plan, assigned by hand in the Partner Dashboard. A shop that has it still
+  sees it as its plan with its limits. Custom or enterprise pricing is
+  described in the listing's "Description of additional charges", never as
+  a plan card in the app.
+- **Detect:** "contact us", "contact sales", "book a call", `mailto:` or an
+  enterprise/custom card on the plans or billing page. `scripts/audit.py`
+  flags these.
+
+## 2026-11 · Backup Hero · 1.2.2 · "Plan changes are unavailable" in production
+
+- **Source:** App Review rejection (flagged under 1.2.2).
+- **Cause:** Next.js prerendered the billing page at **build** time, and the
+  Docker build has no `SHOPIFY_APP_HANDLE`. Production shipped "Plan changes
+  are unavailable" with no way to pick a plan, whatever the runtime env said.
+- **Fix:** render the billing page per request (read the env inside a
+  dynamic render), or read the handle from Shopify at runtime.
+- **Detect:** an `app/**/page.tsx` that reads `env`/`process.env` with no
+  dynamic rendering (`export const dynamic = 'force-dynamic'`,
+  `connection()`, `headers()`, `cookies()`). Check the built output: a
+  prerendered `.html` for a billing route is this bug. `scripts/audit.py`
+  flags billing pages.
+
+## 2026-11 · Backup Hero · plan choice dropped when the welcome link is the app root
+
+- **Source:** found during the review rounds.
+- **Cause:** Shopify sends the merchant to the plan's welcome link with
+  `plan_handle` appended. Only `/billing/confirm` read it, so a welcome link
+  left at the root dropped the choice: Shopify showed Pro as current while
+  the app said "No plan".
+- **Fix:** the root forwards a `plan_handle` (with the whole query string,
+  which App Bridge needs) to the confirm page. Better still, set each plan's
+  welcome link to the confirm path, and re-read the plan from Shopify there.
+
+## 2026-11 · Backup Hero · "No plan" showed Pro's limits
+
+- **Source:** own fix during the review rounds (1.1.4, accurate information).
+- **Cause:** with billing enforcement off, a shop with no plan was shown
+  Pro's limits ("2 backups a day…") as if having no plan included them.
+- **Fix:** a shop without a plan is told to choose one, with the trial
+  mentioned. More generally, the limits a plan card or status shows must be
+  the ones the merchant actually gets.
+
 ## 2026-11 · Backup Hero · 1.2.2 · reinstall showed "Free" over a paid plan
 
 - **Source:** App Review rejection.

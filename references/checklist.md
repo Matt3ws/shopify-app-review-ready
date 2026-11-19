@@ -54,8 +54,14 @@ re-check it, because numbering and rules change.
 - [ ] A store with no active subscription is **redirected to the plan
       page** on open (Shopify's documented integration; how 1.2.2's "request
       approval again on reinstall" happens), even if feature limits are off.
-- [ ] Prices, trial length and plan names match the Partner Dashboard;
-      enterprise pricing only in "additional charges".
+- [ ] Prices, trial length and plan names match the Partner Dashboard.
+- [ ] Every plan card can be chosen and approved through Shopify (1.2.3):
+      no "Contact us"/"book a call"/custom-quote card; enterprise deals are
+      private plans plus "Description of additional charges" in the listing.
+- [ ] Limits shown on plan cards and status are the ones the merchant gets
+      (none of a paid plan's limits shown to a shop without a plan).
+- [ ] The billing page renders per request in production (not prerendered
+      at build without the runtime env); "Change plan" is visible live.
 
 ## 3. Core functionality (2.1.x)
 - [ ] Every feature and option the listing and UI mention works end to end
