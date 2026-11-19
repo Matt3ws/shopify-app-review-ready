@@ -108,6 +108,35 @@ Each entry: **Requirement**, **Source**, what Shopify said, **Cause**, **Fix**,
 - **Fix:** add `app/not-found.tsx` rendering the app's own not-found page.
 - **Detect:** `scripts/audit.py` checks for the root file.
 
+## 2026-09 → 11 · Super Siblings · `products/update` flood from the app's own writes
+
+- **Source:** production incident and fixes (commits from 2026-09-28 to
+  2026-11-03).
+- **Cause:** the app writes a metafield on products, and **every write fires
+  `products/update`** for that product. The app processed its own echoes as
+  merchant edits, so one sync produced a webhook per product touched, queued
+  more work, and flooded the queue. Merchants' bulk edits and imports add
+  bursts of thousands. A Redis hang inside the webhook route then made
+  deliveries overrun Shopify's 5-second limit.
+- **Fix:**
+  - **Echo blocker.** Before writing, record a Redis key per product with the
+    expected `updated_at` window and a hash of the fields you wrote. Drop a
+    delivery only if both match: timing alone would also drop a merchant edit
+    made in the same seconds.
+  - Debounce per product (latest payload wins) and coalesce per shop in a
+    buffer, applied in one batch.
+  - Answer 200 within 5 s; do the work after (`after()` or a queue).
+  - Give each Redis call in the webhook path its own deadline and fail open
+    on timeout (a global `commandTimeout` also hit the batch drain).
+  - Compare payloads the way GraphQL returns them: REST payload image URLs
+    carry query strings.
+- **Detect:**
+  - An app that subscribes to `products/update` (or any `*/update`) **and**
+    writes that same resource (`productSet`, `productUpdate`,
+    `metafieldsSet` on products) with no echo check.
+  - Webhook routes that await Redis or Postgres with no deadline.
+  - `scripts/audit.py` flags the first.
+
 ## 2026-11 · Heart of Wool · storefront endpoint signed tokens for anyone
 
 - **Source:** own security fix (a custom app; the pattern is in older public code too).

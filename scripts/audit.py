@@ -329,7 +329,22 @@ def check_translations(root: Path) -> None:
                 add("WARN", "translations", f"{name} is missing {len(missing)} keys from en.json (e.g. {sorted(missing)[:3]}).", f"translations/{name}")
 
 
+def check_webhook_echoes(root: Path, files: list[Path]) -> None:
+    subscribes = bool(grep(files, r"PRODUCTS_UPDATE|products/update", root)) or "products/update" in read(root / "shopify.app.toml")
+    writes = grep(files, r"\b(productSet|productUpdate|productVariantsBulkUpdate|metafieldsSet)\b", root)
+    echo_aware = grep(files, r"echo|ownWrite|own_write|isOwn", root, re.I)
+    if subscribes and writes and not echo_aware:
+        add("WARN", "webhook echoes", f"Subscribes to products/update and writes products ({short(writes, 3)}). Every write fires products/update; drop your own echoes or the app floods itself (Super Siblings). If the handler only logs a change, confirm a restore's burst is cheap.")
+
+
 def check_compliance_handlers(root: Path, files: list[Path]) -> None:
+    for f in files:
+        if re.search(r"data.?request", f.name, re.I) and f.suffix in (".ts", ".js"):
+            text = read(f)
+            code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(("//", "*", "/*")))
+            produces = re.search(r"createExport|exportRequest|\.export\(|download|ComplianceDataRequest|dataRequest\w*\.(create|upsert)|sendMail|sendEmail|notify", code, re.I)
+            if not produces:
+                add("WARN", "customers/data_request", "The data-request handler doesn't appear to produce anything for the merchant (no export, record or notification). Logging isn't fulfilment.", str(f.relative_to(root)))
     for topic, needle in (("customers/data_request", "data.?request"), ("customers/redact", "customers.?redact"), ("shop/redact", "shop.?redact")):
         if not grep([f for f in files if re.search(needle, str(f), re.I)], r".", root):
             add("WARN", "compliance handlers", f"No handler file matching {topic}; check it is implemented and actually fulfils the obligation.")
@@ -356,6 +371,7 @@ def main() -> int:
     check_package(root)
     check_translations(root)
     check_compliance_handlers(root, files)
+    check_webhook_echoes(root, files)
 
     order = {"FAIL": 0, "CHECK": 1, "WARN": 2, "INFO": 3}
     findings.sort(key=lambda f: order[f.level])

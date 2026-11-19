@@ -156,15 +156,31 @@ Partner API answers for both.
 
 ## Store with no plan
 
-Shopify's own pattern for App Pricing: if the shop has no active
-subscription, redirect to the plan selection page from the app's root, so it
-works whichever page the merchant arrives on. If you don't redirect, a store
-with no plan must still be clearly pointed at the plans on first open, not
-only on the billing page.
+Shopify's documented App Pricing integration has three parts: check for an
+active subscription, **gate access**, and **redirect merchants without an
+active subscription to the hosted plan selection page**, from the app's root
+so it works whichever page they arrive on
+(https://shopify.dev/docs/apps/launch/billing/shopify-app-pricing,
+…/redirect-plan-selection-page). For an app with no free plan, this is how it
+"requests approval for charges again on reinstall" (1.2.2): a reinstalled
+shop whose subscription has ended lands on the plan page.
+
+An app that lets a no-plan shop use everything, with only a note on the
+billing page, never asks for approval. That's a 1.2.2 risk even when the plan
+display is right.
 
 ## Enforcement switches
 
-Some apps gate features on the plan behind an env switch. Turning
-enforcement on during review adds risk (the reviewer meets plan walls) and
-isn't what 1.2.2 tests; it tests that the plan shown is right. Turn it on
-after approval, once you've watched the plan read work in production.
+Some of our apps gate features behind an env switch that's off until
+listing. Know what "off" means for the reviewer:
+
+- If "off" also turns off the redirect to the plan page, the reviewer can use
+  the whole paid app without approving a charge, which is the opposite of
+  Shopify's documented integration. Keep the **redirect** on even when the
+  feature limits are off.
+- If enforcement is on, a reviewer who hasn't picked a plan meets plan walls.
+  That's fine as long as every wall explains itself and links to the plan
+  page, and the testing notes tell them to pick a plan first.
+
+Decide this per app before submitting, and say in the testing notes which
+one the reviewer will see.

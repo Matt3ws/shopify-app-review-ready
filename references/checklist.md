@@ -17,8 +17,13 @@ re-check it, because numbering and rules change.
       another organization's dev store can select them.
 - [ ] Production env complete (billing credentials, app handle, encryption
       key); workers and monitoring green.
-- [ ] `shopify app security check` is clean; the self-review list has been
-      walked.
+- [ ] `shopify app security check --exclude 'types/**'` run, and its agent
+      checks executed and recorded (on Next.js most checks only exist as agent
+      prompts); the self-review list has been walked.
+- [ ] **Production runs the code you audited.** After deploying, repeat the key
+      checks against the live URL (e.g. `curl -s -o /dev/null -w '%{http_code}'
+      -H 'sec-fetch-site: cross-site' '<app>/billing/confirm?shop=x.myshopify.com&plan_handle=p'`
+      must not be 404).
 
 ## 1. Install and session (2.3.x, 3.1.2)
 - [ ] Shopify-managed install; install lands in the app UI with no login.
@@ -46,7 +51,9 @@ re-check it, because numbering and rules change.
 - [ ] Welcome-link path exists; return with `plan_handle` re-reads and shows
       the plan; the iframe gate lets the top-level return through.
 - [ ] Upgrade, downgrade and decline all leave the app correct and usable.
-- [ ] A store with no plan is redirected or clearly pointed at the plans.
+- [ ] A store with no active subscription is **redirected to the plan
+      page** on open (Shopify's documented integration; how 1.2.2's "request
+      approval again on reinstall" happens), even if feature limits are off.
 - [ ] Prices, trial length and plan names match the Partner Dashboard;
       enterprise pricing only in "additional charges".
 
@@ -58,6 +65,15 @@ re-check it, because numbering and rules change.
       (dev stores skip the protected customer data gate).
 - [ ] Test orders (Bogus Gateway) count in everything a reviewer sees;
       exclude them only from billing usage.
+- [ ] Apps that create or restore records: what comes back matches what
+      was there, end to end. Published to the same sales channels (a
+      created product is unpublished by default); stock activated at every
+      location before it's set; references remapped from old ids to the new
+      records (menus, metaobject and collection-condition references); images
+      and custom fields on every resource the UI mentions.
+- [ ] Every limit the code knows about (caveats, unsupported fields) is
+      **shown in the UI** where the merchant chooses or approves. A caveat in
+      a code comment or an unused array discloses nothing.
 - [ ] Data sync (2.1.4): Shopify is the source of truth; webhooks correct
       stored copies; writes are idempotent; a reconcile job heals missed
       webhooks.

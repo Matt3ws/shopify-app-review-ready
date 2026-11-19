@@ -84,7 +84,28 @@ Work through these in order. Each step says why it exists.
    sees production. If you can't run them yourself, hand the user the exact
    script.
 
-8. **Write the report and the submission notes** (templates below).
+8. **Check that production runs the code you audited.** An audit of the
+   working tree says nothing about what the reviewer gets. After deploying,
+   repeat the decisive checks against the live URL (the plan-return URL must
+   not 404, the plan shows after a reinstall). Backup Hero's audit found the
+   fixed iframe gate still 404ing live because the fix wasn't deployed.
+
+9. **Write the report and the submission notes** (templates below).
+
+### Running it efficiently
+
+The audit is large. Do the gathering in parallel, and keep the judging and
+the report for yourself. Four independent read-only jobs worked well:
+
+1. Walk the official self-review list against the code.
+2. Check per resource or feature that what the app captures or promises is
+   what it writes back and compares (for any app that copies, syncs or
+   restores data).
+3. and 4. Run Shopify's security agent checks, split into auth/tenant and
+   credentials/data.
+
+Confirm every finding a job reports in the code yourself before it goes in
+the report: jobs report with confidence either way.
 
 ## Handling a rejection
 
@@ -115,6 +136,11 @@ Work through these in order. Each step says why it exists.
 - **Everything the listing or UI promises must round-trip.** If a backup
   includes images, a restore must put images back. Test delete-then-restore
   (or create-then-verify) for every option the UI offers, on a real store.
+  "Comes back" includes being published to the same sales channels, stocked
+  at the same locations, and linked from the same menus.
+- **A limit only counts as disclosed if the merchant can see it.** Caveats
+  in code comments or unused arrays protect no one; show them where the
+  merchant chooses or approves.
 - **Production is a different app.** Different client ID, handle, toml,
   env, and Partner Dashboard approvals (protected customer data is approved per
   app). Verify production; never infer it from dev.

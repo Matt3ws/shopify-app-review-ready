@@ -78,8 +78,21 @@ on 2027-01-01, and Shopify rejects their API requests from 2027-04-01.
     `MISSING_DEPENDENCY_SECURITY_AUTOMATION` (it wants Dependabot or Renovate).
   - Injection: `UNSAFE_INNERHTML`, `CROSS_SITE_SCRIPTING`, `SQL_INJECTION`.
 
-  Some deterministic checks only cover the React Router template; on Next.js
-  they fall back to agent review, so don't read a clean run as a pass.
+  Some deterministic checks only cover the React Router template. On our
+  Next.js apps 11 of 15 came back "unresolved" and the other 35 checks are
+  only **agent prompts** in `.shopify/app-security/<config>/agent-checks.json`.
+  A clean summary is not a pass. How to run it properly:
+  1. `shopify app security check --no-input -c shopify.app.toml --exclude 'types/**'`.
+     Generated GraphQL types are too large for the scanner and silently block
+     COMMITTED_SECRET, EOL_API_VERSION and STATIC_FRAME_ANCESTORS.
+  2. Run the relevant agent checks: give each `prompt` to a subagent, grouped
+     (auth/tenant, credentials/data), with the file's `instructions`. Skip the
+     theme, Liquid, ScriptTag and App Proxy checks if the app has none.
+  3. Merge the findings into one document and pipe it to
+     `shopify app security record -c shopify.app.toml` (it takes no
+     `--exclude`; the scope comes from the document), then
+     `shopify app security review -c shopify.app.toml`. Backup Hero's first
+     full run: 30 checks, 0 findings, 2 unresolved (App Proxy, not used).
 - **Self-review:**
   `shopify doc fetch --url https://shopify.dev/docs/apps/launch/app-store-review/app-store-ai-self-review-requirements`
   gives the requirement list with "verification guidance" for each item.
@@ -133,6 +146,18 @@ on 2027-01-01, and Shopify rejects their API requests from 2027-04-01.
   failure. Shopify retries 8 times over 4 hours, so run a reconcile job for
   anything that must not be missed.
 - Webhook URLs must be HTTPS (`INSECURE_WEBHOOK_URL`).
+- **Your own writes echo back.** Writing a product (a metafield included)
+  fires `products/update` for it; the same goes for other `*/update` topics.
+  An app that subscribes to the topic of a resource it writes must drop its
+  own echoes (a Redis key per record with the expected `updated_at` and a hash
+  of what was written), or it floods itself (Super Siblings).
+- **Plan for bursts.** Bulk edits, imports and your own restores send one
+  delivery per record. Debounce per record and coalesce per shop; keep the
+  route to one cheap idempotent write or an enqueue.
+- **Bound every wait in the webhook path.** Give each Redis or database call
+  its own deadline and fail open (process without dedup) on timeout. A
+  client with `maxRetriesPerRequest: null` waits forever while Redis is down,
+  and the delivery overruns the 5-second limit.
 
 ## Tokens, secrets and the browser
 
