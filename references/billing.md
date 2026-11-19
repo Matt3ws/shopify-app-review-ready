@@ -2,155 +2,169 @@
 
 Reviewers test billing on almost every paid app: choose a plan, approve it,
 come back to the app, upgrade or downgrade, decline, and uninstall and
-reinstall during a paid cycle. Requirement 1.2.2 is about this whole loop.
+reinstall during a paid cycle. Requirement 1.2.2 covers the whole loop:
+"ensure that it can accept, decline and request approval for charges again on
+reinstall."
+
+**Shopify App Pricing (managed pricing) changed on 2026-04-28.** Several
+things that worked for apps set up earlier, including our own older apps,
+are wrong for apps set up after that. Check which one you are before copying a
+sibling app. Source:
+https://shopify.dev/docs/apps/launch/billing/shopify-app-pricing
 
 ## Contents
 - What the reviewer checks
-- Reading the plan (the pattern)
+- Reading the plan (Shopify App Pricing)
+- Apps set up before April 2026
 - The round trip to Shopify's plan page
+- Testing plans, and the reviewer's store
 - Uninstall and reinstall
-- Webhook: app_subscriptions/update
 - Store with no plan
-- Test charges, trials, dev stores
 - Enforcement switches
 
 ## What the reviewer checks
 
-1. The app links to plan selection (managed pricing: Shopify's hosted page).
+1. The app links to plan selection (App Pricing: Shopify's hosted page).
 2. After approving, they land back in the app (no 404) and **the app shows the
    plan they chose**.
 3. Upgrade and downgrade work without contacting support.
 4. Declining leaves the app usable and honest about having no plan.
-5. Uninstall and reinstall during a paid cycle: the app shows the paid plan
-   still running until it ends (or asks to approve again if Shopify says
-   there's no subscription). It must never show "Free" over a live plan.
+5. Uninstall and reinstall during a paid cycle: the app honours the paid plan
+   for the rest of its period, or asks for approval again if Shopify says
+   there's no subscription. It must never show "Free" over a live plan
+   (Backup Hero's 1.2.2 rejection).
 
-## Reading the plan
+## Reading the plan (Shopify App Pricing)
 
-Read it from the Admin API with the shop's own offline token, on every app
-open. This is how our approved apps do it, and it works for managed pricing
-and the Billing API alike.
+From the docs: "With Shopify App Pricing, subscription status comes from the
+Partner API, not from the GraphQL Admin API." The Admin API's
+`currentAppInstallation.activeSubscriptions` doesn't list App Pricing
+subscriptions, so an app reading it shows "no plan" to a merchant who just
+paid. The migration guide says to replace `billing.check()` and
+`currentAppInstallation` checks with Partner API queries.
 
 ```graphql
-query getActiveSubscriptions {
-  currentAppInstallation {
-    activeSubscriptions {
-      id
-      status
-      test
-      createdAt
-      trialDays
-      currentPeriodEnd
-      lineItems {
-        plan {
-          pricingDetails {
-            __typename
-            ... on AppRecurringPricing { planHandle }
-          }
-        }
-      }
-    }
+# Partner API: https://partners.shopify.com/<org-id>/api/<version>/graphql.json
+query ActiveSubscription($appId: ID!, $shopId: ID!) {
+  activeSubscription(appId: $appId, shopId: $shopId) {
+    trialEndsAt
+    cancelAtEndOfCycle
+    items { handle }
   }
 }
 ```
 
-- Entitling statuses: `ACTIVE` (and `ACCEPTED`). Anything else is no plan.
-- `planHandle` lives on `AppRecurringPricing` (managed pricing). Don't match
-  on `name`: Shopify localizes it.
-- **Don't filter out `test: true`.** Development stores and App Review use
-  test charges; they're real subscriptions for the app's purposes.
-- Trial end: `createdAt + trialDays`.
-- An active subscription without a handle is a surprise, not "no plan":
-  treat it as an error and keep the last known plan.
+- Credentials: a Partner API client with the "Manage apps" permission, your
+  organization id, and the app's gid. `shopId` is the shop's Admin gid
+  (`shop { id }` via the Admin API, cache it). Public apps only.
+- Rate limit: 4 requests a second per client. Throw on throttled or failed
+  responses; **never treat an error as "no subscription"**.
+- **Cache only a confirmed subscription, briefly** (Shopify suggests about
+  five minutes), so a merchant who just approved a plan is checked immediately.
+  **Never cache "no plan".** Backup Hero cached everything for six hours, and
+  its uninstall handler stamped "no plan" as freshly synced, so a reinstall
+  showed Free (1.2.2).
+- Fail open, never wrong: on an error, keep the last known plan and don't mark
+  it synced.
+- No webhook tells you about a change: "After April 28, 2026, Shopify App
+  Pricing no longer sends webhooks for subscription changes." Read the
+  Partner API on app open and after the plan redirect; for background jobs,
+  re-check on a schedule or use the Partner API's `events` query.
+- One-time purchases from a Billing API past still come from
+  `currentAppInstallation`; check both if you migrated.
 
-Rules that came from the 1.2.2 rejection:
+## Apps set up before April 2026
 
-- **No TTL on the plan read.** One cheap query per open costs nothing; a
-  cache is how a reinstall showed Free for six hours.
-- **Fail open, never wrong.** If the query fails (network, revoked token),
-  keep the stored plan and don't mark it synced. Only a definite answer
-  ("active with handle X" or "none") is written.
-- **Don't use the Partner API for this.** It needs organization
-  credentials in the env, answers only for listed apps, and is rate
-  limited. The Admin API answers for the installation itself.
-- Storing the plan for background jobs is fine, as long as every app open and
-  every `app_subscriptions/update` overwrites it from Shopify.
+Legacy behaviour still applies to apps enrolled earlier (this is why our
+older apps read `currentAppInstallation` and subscribe to
+`app_subscriptions/update`, and passed review that way):
+
+- `APP_SUBSCRIPTIONS_UPDATE` webhooks were sent before 2026-04-28. Our
+  experience: a plan switch sends two (new `ACTIVE`, old `CANCELLED`) in no
+  guaranteed order, so only `ACTIVE` may set the plan. Better to treat it as a
+  trigger and re-read.
+- `charge_id` was appended to the redirect before 2026-04-28; it no longer
+  is.
+- Test subscriptions were created on development stores before 2026-04-28.
+  Now "the `test` field on the GraphQL Admin API `AppSubscription` object is
+  `false`" for no-charge subscriptions; don't use it.
+
+If you don't know when your app was enrolled, follow the current rules: the
+Partner API answers for both.
 
 ## The round trip to Shopify's plan page
 
-- Plan selection URL (managed pricing):
+- Plan selection URL:
   `https://admin.shopify.com/store/<store-handle>/charges/<app-handle>/pricing_plans`
   where `<store-handle>` is the shop domain without `.myshopify.com`.
-- Read `<app-handle>` from `currentAppInstallation.app.handle`. Dev and
-  production apps have different handles; an env var that's wrong or unset
-  sends the button to a Shopify 404 or hides it.
-- Open it with `target="_top"` (or App Bridge `open(url, '_top')`); it won't
-  render inside the iframe.
-- Coming back: Shopify redirects to the plan's **welcome link** (Partner
-  Dashboard → pricing) with `plan_handle` appended. Two things must hold:
-  - The welcome-link path exists in the app. If it points at the app root,
-    the root must notice `plan_handle` and forward or refresh.
-  - The iframe gate lets the request through. It can arrive as a
-    **top-level cross-site** load with `?shop=` and an `admin.shopify.com`
-    referer. See [embedded-app.md](embedded-app.md#the-iframe-gate). This was
-    a rejection ("selecting a paid plan results into an error 404 page").
-- The return happens whether the merchant approved or backed out, and the
-  params don't say which. Re-read the plan and show what it is; don't announce
-  "upgraded".
+- The app handle must be the **production** app's. Dev and production apps
+  have different handles; a wrong or unset one sends "Change plan" to a
+  Shopify 404 or hides the button.
+- Open it with `target="_top"` (or the framework's redirect out of the
+  iframe). Shopify's best practices: no pop-up windows for charge approval.
+- Coming back: Shopify redirects to the plan's **welcome link** (redirection
+  URL, per plan). Documented: for apps with an App Home, a relative path such
+  as `/welcome` with `plan_handle` appended; `shop` is appended only for
+  external URLs. Make sure:
+  - The path exists in the app. If it's the app root, the root must notice
+    `plan_handle` and forward or refresh.
+  - The iframe gate lets the request through. **Observed by us, not
+    documented:** the return can arrive as a top-level, cross-site load with
+    `?shop=` and an `admin.shopify.com` referer, and a gate that only admits
+    iframe loads answers 404 (the Super Siblings rejection). See
+    [embedded-app.md](embedded-app.md#the-iframe-gate).
+- After the redirect, query the Partner API to confirm, and show the plan
+  Shopify reports rather than announcing an upgrade.
+
+## Testing plans, and the reviewer's store
+
+- Development stores test App Pricing **at no charge**, but which plans
+  depend on who owns the app and the store. On a dev store owned by
+  **another** Partner organization, which is what a reviewer uses, only free
+  plans and paid plans marked **"free for partners and developers"** can be
+  selected at no charge. Set that on the paid plans, or the reviewer can't
+  test them.
+- A no-charge subscription is the paid plan's handle with $0 prices. Don't
+  show a "test charge" badge based on `test`.
+- Known limitation: the plan selection page can 404 for a draft app when the
+  dev store's locale differs from the listing's. Test with the listing's
+  language.
+- Prices, trial length and plan names in the app and listing must match the
+  Partner Dashboard exactly. Show a trial end only when Shopify reports one.
+  Enterprise or custom plans go in the listing's "Description of additional
+  charges", not as fake plans.
 
 ## Uninstall and reinstall
 
+- The Billing API docs say Shopify cancels the subscription on uninstall,
+  and "Merchants can reinstall and use the app for the remainder of the
+  billing period." The App Pricing docs don't say what `activeSubscription`
+  returns after an uninstall, and our reviewer saw the paid plan "remains
+  active until its expiration date". **Test it on production**; don't assume.
+  If you read the Billing API, a `CANCELLED` subscription with
+  `currentPeriodEnd` in the future may still entitle the merchant.
 - `app/uninstalled`: mark the shop uninstalled and pause scheduled work.
-  Clearing the stored plan is fine. **Don't record it as synced**, because
-  that blocks the next read.
-- Don't delete merchant data on `app/uninstalled`. Delete on `shop/redact`,
-  which Shopify sends about 48 hours later. A quick reinstall then finds its
-  data intact.
-- A reinstall is an *update* of the existing store row, not a new install, so
-  "first install only" hooks don't run. Make sure the plan read, resuming
-  paused work, and re-registering webhooks don't depend on "is new".
-- A late `app/uninstalled` delivery can arrive after the reinstall. Compare
-  its `X-Shopify-Triggered-At` with when the new token was exchanged, and
-  ignore it if the reinstall is newer.
-- Quick reinstall edge: a stored token can be revoked yet look valid. If the
-  first Admin call on open fails with 401 and the refresh fails, exchange a
-  new token in the same open rather than leaving the merchant broken until
-  the next one.
-
-## Webhook: app_subscriptions/update
-
-Every approved Edition public app subscribes to it. On delivery, re-read the
-plan with the query above (the payload doesn't carry `planHandle`). Without
-it, a merchant who downgrades or cancels while the app is closed keeps paid
-features until they next open the app, which our audit flagged as a terms
-problem. Adding it means editing the production toml: get explicit
-confirmation first.
+  Clearing the stored plan is fine. **Don't record it as synced.**
+- Don't delete merchant data on `app/uninstalled`; delete on `shop/redact`
+  (about 48 hours later). A quick reinstall then finds its data.
+- A reinstall updates the existing store row. "First install only" hooks
+  don't run, so the plan read, resuming paused work, and webhook registration
+  mustn't depend on "is new" (2.3.4: no install-once flags, no failure on a
+  duplicate row).
+- A late `app/uninstalled` delivery can arrive after the reinstall: compare
+  its `X-Shopify-Triggered-At` with when the new token was exchanged.
 
 ## Store with no plan
 
-If there's no free plan, a store with no subscription must be clearly pointed
-at the plans: on first open, not only on the billing page. A reviewer who
-installs and sees a working app with no hint about plans may conclude billing
-isn't implemented, and one who meets a "Get a plan" wall without explanation
-may conclude the app is broken. Say what to do, with one button to the plan
-page.
-
-## Test charges, trials, dev stores
-
-- Show a "Test charge" badge when `test` is true, so it's clear no money moved.
-- Show the trial end only when Shopify says there is a trial; don't advertise
-  "14-day free trial" to a reinstalling shop that may already have used it.
-  Keep the trial length in copy equal to the Partner Dashboard.
-- Prices in the UI must match the Partner Dashboard exactly; a mismatch
-  reads as bait and switch.
-- `shop.plan.partnerDevelopment` tells you it's a development store, if you
-  want to explain that no real charge applies.
+Shopify's own pattern for App Pricing: if the shop has no active
+subscription, redirect to the plan selection page from the app's root, so it
+works whichever page the merchant arrives on. If you don't redirect, a store
+with no plan must still be clearly pointed at the plans on first open, not
+only on the billing page.
 
 ## Enforcement switches
 
 Some apps gate features on the plan behind an env switch. Turning
 enforcement on during review adds risk (the reviewer meets plan walls) and
-isn't what 1.2.2 tests: it tests that the plan shown is right. If enforcement
-stays off, the UI must still show the correct plan and still point plan-less
-stores at the plans. Turn it on after approval, once you've watched the plan
-read work in production for a few days.
+isn't what 1.2.2 tests; it tests that the plan shown is right. Turn it on
+after approval, once you've watched the plan read work in production.

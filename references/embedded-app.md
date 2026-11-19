@@ -1,7 +1,7 @@
 # Embedded app: install, the iframe gate, links and errors
 
-Requirement 2.1.1 fails an app for any error page, 404, 500, or UI bug that
-stops the review. Most of ours came from the edges of the embedded app:
+Requirement 2.1.1 fails an app for error pages ("404's, 500's, 300's"), and
+2.1.2 for even minor UI bugs that partly block the review. Most of ours came from the edges of the embedded app:
 requests the gate didn't expect, links that left the iframe, and URLs nothing
 handled.
 
@@ -33,8 +33,10 @@ handled.
   `REQUEST_DERIVED_SHOP_SCOPE`).
 - If session setup fails, show an error with a retry button, not a blank page
   or a spinner forever.
-- `redirect_urls` in the production toml should point at a path the app
-  serves (template leftovers like `/api/auth` 404 if anything ever uses them).
+- `redirect_urls` in the production toml must be on the same host as
+  `application_url`: Shopify validates against it if a flow ever falls back
+  to OAuth, and a different host is an install failure. Pointing it at a path
+  the app actually serves avoids a 404 in that fallback.
 
 ## The iframe gate
 
@@ -62,7 +64,8 @@ cross-site document load to the confirm page.
 ## CSP frame-ancestors
 
 `frame-ancestors https://<shop> https://admin.shopify.com;` with `<shop>`
-validated as above. Without a valid shop, allow `admin.shopify.com` only.
+validated as above, on **every HTML route** (missing it is a rejection;
+a value that ignores the shop is flagged as `STATIC_FRAME_ANCESTORS`). Without a valid shop, allow `admin.shopify.com` only.
 Never fall back to `*.myshopify.com`, and never interpolate an unchecked
 param (a space or `;` adds sources or whole directives).
 
@@ -109,4 +112,13 @@ A spinner that never ends fails review like an error page does.
   console.log noise.
 - Translations complete for every listed language (same keys in every
   catalog); no hardcoded strings in one language.
-- Ask for reviews only via `shopify.reviews.request()` (requirement 1.3).
+- Reviews: 1.3.1 bans incentives, withholding features and non-neutral
+  wording; asking inside admin extensions or Sidekick is banned too (2.2.6,
+  2.2.9). Our practice: ask only via `shopify.reviews.request()`.
+- App Bridge (2.2.3): the CDN script, plus `@shopify/app-bridge-react` if you
+  use React. The legacy `@shopify/app-bridge` npm package fails the
+  self-review.
+- No pop-up windows for OAuth or charge approval.
+- Reviewers' ad blockers can stall the automated session-token check; the
+  first ID token fetch must not depend on anything an ad blocker would
+  block.

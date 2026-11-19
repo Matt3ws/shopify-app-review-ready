@@ -29,6 +29,12 @@ references hold the detail; this file is the workflow.
 
 Work through these in order. Each step says why it exists.
 
+0. **Check the blockers outside the code first.** IP allowlist enforced
+   (no new installs without one since 2026-11-20), protected customer data
+   granted, paid plans selectable by a reviewer from another organization.
+   They're in section 0 of the checklist. A perfect app that a reviewer
+   can't install still fails.
+
 1. **Map the app.** Find the production and dev app configs
    (`shopify.app.toml` vs `shopify.app.<env>.toml`), the billing model
    (managed pricing or Billing API, free plan or not), the scopes and webhook
@@ -49,24 +55,36 @@ Work through these in order. Each step says why it exists.
 4. **Walk the checklist.** [references/checklist.md](references/checklist.md),
    area by area. Mark each item OK / RISK / UNKNOWN with evidence
    (`path:line`, a command's output, or "needs Partner Dashboard check").
-   Deeper material for the two areas that fail most:
-   - Billing: [references/billing.md](references/billing.md)
+   Deeper material:
+   - Billing (App Pricing changed on 2026-04-28): [references/billing.md](references/billing.md)
+   - Security, Shopify's automated checks, PCD obligations, IP allowlist: [references/security.md](references/security.md)
    - Embedded app, proxy gate, CSP, links, errors: [references/embedded-app.md](references/embedded-app.md)
    - Customer data, scopes, compliance webhooks: [references/data-and-compliance.md](references/data-and-compliance.md)
+   - Theme app extensions, App Proxy, Functions: [references/storefront-and-extensions.md](references/storefront-and-extensions.md)
 
-5. **Compare with an approved sibling app.** If the team has a public app that
+5. **Run Shopify's own tools.** `shopify app security check`, and the
+   official self-review list
+   (`shopify doc fetch --url https://shopify.dev/docs/apps/launch/app-store-review/app-store-ai-self-review-requirements`).
+   If the Shopify plugin skill (`shopify-plugin:shopify`) is available, use
+   it to fetch current docs instead of relying on memory, including this
+   skill's.
+
+6. **Compare with an approved sibling app.** If the team has a public app that
    already passed review on the same stack, look at how it solves each
-   requirement before inventing a solution. A difference is a lead, not proof:
-   the sibling may simply never have been tested on that path.
+   requirement. A difference is a lead, not proof: the sibling may never have
+   been tested on that path, or may run under older platform rules. (Copying
+   an older app's billing read nearly re-broke 1.2.2; see the near-miss in the
+   log.)
 
-6. **Run the reviewer's flows on production.** Follow
+7. **Run the reviewer's flows on production.** Follow
    [references/reviewer-flows.md](references/reviewer-flows.md) against the
-   production app on a development store, not the dev app: their configs,
+   production app, on a development store and a non-development store (dev
+   stores skip the protected customer data gate), not the dev app: their configs,
    handles, env and Partner Dashboard approvals differ, and the reviewer only
    sees production. If you can't run them yourself, hand the user the exact
    script.
 
-7. **Write the report and the submission notes** (templates below).
+8. **Write the report and the submission notes** (templates below).
 
 ## Handling a rejection
 
@@ -89,25 +107,31 @@ Work through these in order. Each step says why it exists.
 
 ## Principles that come out of the rejections
 
-- **Read lifecycle state from Shopify, live.** Plan, subscription, and
-  install state change outside your app (uninstall, reinstall, upgrade on
-  Shopify's page). A cached copy with a TTL is what failed 1.2.2. One cheap
-  Admin API query per app open is fine.
+- **Read lifecycle state from Shopify, and never cache its absence.** Plan,
+  subscription and install state change outside your app (uninstall,
+  reinstall, a plan change on Shopify's page). With App Pricing the plan comes
+  from the Partner API; cache only a confirmed plan, for minutes. A cached
+  "no plan" is what failed 1.2.2.
 - **Everything the listing or UI promises must round-trip.** If a backup
   includes images, a restore must put images back. Test delete-then-restore
   (or create-then-verify) for every option the UI offers, on a real store.
 - **Production is a different app.** Different client ID, handle, toml,
   env, and Partner Dashboard approvals (protected customer data is approved per
   app). Verify production; never infer it from dev.
+- **A development store is not the reviewer's store.** Dev stores skip the
+  protected customer data gate, and reviewers place test orders. Test
+  order and customer features on a non-dev trial store with Bogus Gateway
+  orders.
 - **The reviewer's first minute matters.** Install lands in the app UI with no
   login, the app explains what to do, and no page 404s or hangs. A store with
   no plan must be pointed at the plans.
 - **Fail open for merchants, never show the wrong state.** If Shopify can't
   answer, keep the last known plan. Don't downgrade, and don't claim a plan
   that isn't there.
-- **Verify Shopify claims against the docs** (shopify.dev or the Shopify dev
-  MCP) and write down what they said. Memory of how billing or scopes work has
-  been wrong before, including in our own READMEs.
+- **Verify Shopify claims against the docs** (shopify.dev, `shopify doc
+  fetch`, or the Shopify skill) and write down what they said and when.
+  Billing, tokens and allowlists changed during 2026; memory and our own
+  READMEs have been wrong.
 - **Never edit the production `shopify.app.toml` without explicit
   confirmation.** Webhook topics and scopes there are deploy-time gates
   (protected customer data can make `shopify app deploy` refuse the whole app).

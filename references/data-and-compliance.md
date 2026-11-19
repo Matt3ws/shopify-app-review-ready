@@ -8,7 +8,21 @@ denied or null data and a core feature looks broken.
 
 - Reading customers, orders, draft orders, or subscribing to `orders/*` or
   `customers/*` webhook topics needs **Protected customer data access**
-  approved in the Partner Dashboard.
+  approved in the Partner Dashboard. The gate is on the `Order` and
+  `Customer` objects themselves: an app that selects only line items and
+  amounts, no personal fields, still needs Level 1.
+- Request it in the **Dev Dashboard → app → Settings → Access requests**
+  (choose a distribution method first; dev-store-only use needs no review).
+- An unapproved **field** doesn't fail the request: it comes back `null`
+  with HTTP 200 and an `errors` entry ("This app is not approved to use the
+  phoneNumber field…"). Treat that like `ACCESS_DENIED`, not as empty data.
+- **Granted, not requested.** "In review" in the dashboard means a
+  reviewer's store gets `ACCESS_DENIED`. Don't submit until it says
+  approved.
+- **Development stores are exempt from the gate.** Every dev-store test
+  passes while a non-dev store (the reviewer's, a real merchant's) is
+  refused. Test PCD-dependent features on a non-dev trial store. This cost
+  Bundle Hero three review rounds.
 - Approval is **per app**. Dev and production are separate apps; "we're
   approved" usually means production only.
 - **Level 1** covers customer data without personal fields; **Level 2**
@@ -21,8 +35,11 @@ denied or null data and a core feature looks broken.
 - Code must survive a denial: treat `ACCESS_DENIED` on a resource as
   "skipped, here's why", not a crash. Word the message so the merchant knows
   it's the app's permission, not something they can fix.
-- Before submitting, check in the Partner Dashboard, for the **production**
-  app, that every personal field the app reads is requested with a reason.
+- Before submitting, check in the Dev Dashboard, for the **production** app,
+  that every personal field the app reads is requested with a reason, and
+  that the Level 1/Level 2 obligations in [security.md](security.md) are met.
+  Apps holding customer data for a long time (backups) are the ones Shopify
+  picks for a data protection review.
 
 ## Scopes
 
@@ -43,8 +60,12 @@ fulfilled**:
 | Topic | Obligation |
 |---|---|
 | `customers/data_request` | Get the customer's data to the merchant (e.g. a downloadable export in the app). Logging it isn't enough. |
-| `customers/redact` | Delete that customer's personal data everywhere, including inside long-lived copies (backups, exports, undo records). |
+| `customers/redact` | Delete that customer's personal data everywhere, including inside long-lived copies (backups, exports, undo records). Shopify sends it 5 days after the request (later for a pending gift card). |
 | `shop/redact` | Arrives about 48 hours after uninstall. Delete everything for the shop, including object storage. |
+
+Complete each action within **30 days** of receiving it. If the law requires
+you to keep the data (e.g. accounting), don't delete it, and be able to say
+why. The endpoints must accept `POST` with a JSON body.
 
 Webhook handling that passes Shopify's automated checks:
 
@@ -62,6 +83,10 @@ Webhook handling that passes Shopify's automated checks:
   visible.
 - A handler that catches and swallows errors can never be retried by the
   queue; let it throw.
+- `shopify app webhook trigger` sends a sample to a URL; it doesn't prove
+  your subscriptions are registered. Check the production toml and the Dev
+  Dashboard. Delivery rules (timeouts, retries, 3xx) are in
+  [security.md](security.md#webhooks).
 
 ## Data lifecycle claims
 

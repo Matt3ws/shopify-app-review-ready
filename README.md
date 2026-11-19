@@ -3,11 +3,14 @@
 **A Claude Code skill for getting Shopify apps through App Store review the
 first time.**
 
-Every rule in here comes from something Shopify actually sent back to one of
-six public apps built on the same stack: real rejections, automated security
-check findings, deploy gates, and near-misses caught just before submission.
-Each one is written down with what Shopify said, why it happened, how it was
-fixed, and how to check your own app for it.
+Every rule in here comes from one of two places. The first is something
+Shopify actually sent back to one of our apps (six public apps and a number of
+custom ones, all built on the same stack): real rejections, automated
+security check findings, deploy gates, and near-misses caught just before
+submission. Each one is written down with what Shopify said, why it
+happened, how it was fixed, and how to check your own app for it. The second
+is Shopify's own documentation on review, security, billing and protected
+customer data, as of November 2026, with links.
 
 A rejection is expensive. Fail the same core requirement twice and Shopify
 pauses your submission for weeks. This skill exists so that doesn't happen
@@ -22,6 +25,9 @@ A few of the cases in the log, to show the kind of thing it knows about:
 | What Shopify said | What was actually wrong |
 |---|---|
 | **1.2.2**: reinstalling during an active billing cycle shows the app on "Free" | The plan was cached with a 6-hour TTL, and the uninstall handler stamped "no plan" as freshly synced |
+| **2.1.4**, three rounds: orders and revenue showed zero | Dev stores skip the protected customer data gate, and test orders were filtered out; the reviewer's store hit both |
+| No new installs from 2026-11-20 | No IP allowlist (bulk operations were already blocked from 2026-11-12) |
+| A plan chosen on Shopify's page didn't show in the app (near-miss) | Shopify App Pricing status comes from the Partner API since April 2026, not `currentAppInstallation` |
 | **2.1.1**: the restored product didn't include its images | The backup captured media, but the restore never wrote it back |
 | "Selecting a paid plan results into an error 404 page" | The iframe gate rejected Shopify's top-level redirect after plan approval |
 | `REQUEST_DERIVED_SHOP_SCOPE` (app security check) | A Server Action took the shop from the browser |
@@ -37,16 +43,20 @@ When you're preparing a submission, answering a rejection, or building
 something reviews tend to fail on (billing, install and reinstall, webhooks,
 customer data, the iframe gate), the skill has Claude:
 
-1. **Run a static audit.** `scripts/audit.py` checks the repo for the
+1. **Check the blockers outside the code**: IP allowlist, protected
+   customer data, plans a reviewer can select.
+2. **Run a static audit.** `scripts/audit.py` checks the repo for the
    concrete patterns behind past rejections.
-2. **Check every recorded rejection** against your app, using the "Detect"
+3. **Check every recorded rejection** against your app, using the "Detect"
    step each entry carries.
-3. **Walk a pre-submission checklist** covering install and session, billing,
+4. **Walk a pre-submission checklist** covering install and session, billing,
    core functionality, embedded-app quality, data and compliance, security,
-   and the listing.
-4. **Hand you the reviewer's flows** to run on production: install, choose a
-   plan, reinstall mid-cycle, use every advertised feature, the failure paths.
-5. **Write a readiness report** (blockers, risks, what needs a human to check
+   and the listing, and run Shopify's own `shopify app security check` and
+   self-review.
+5. **Hand you the reviewer's flows** to run on production: install, choose a
+   plan, reinstall mid-cycle, use every advertised feature, the failure paths,
+   on a non-development store as well.
+6. **Write a readiness report** (blockers, risks, what needs a human to check
    in the Partner Dashboard) and **testing instructions** reviewers can follow.
 
 For a rejection, it reproduces each requirement, looks for the root cause
@@ -85,16 +95,20 @@ python3 scripts/audit.py path/to/your-app
 ```text
 Shopify review audit: my-app (272 code files)
 
-FAIL  root not-found: No app/not-found.tsx. Next 16 uses only the root one for unmatched URLs, so they show a bare 404 (2.1.1). [app/]
-FAIL  iframe gate: proxy.ts 404s non-iframe requests but doesn't clearly let through a top-level request with a valid ?shop= ... [proxy.ts]
-WARN  app_subscriptions/update: Production toml doesn't subscribe to app_subscriptions/update ... [shopify.app.toml]
-INFO  protected customer data: Scopes ['read_customers', 'read_orders']: check PCD approval (and Level 2 fields) for the PRODUCTION app.
+FAIL   root not-found: No app/not-found.tsx. Next 16 uses only the root one for unmatched URLs, so they show a bare 404 (2.1.1). [app/]
+FAIL   iframe gate: proxy.ts 404s non-iframe requests but doesn't clearly let through a top-level request with a valid ?shop= ... [proxy.ts]
+CHECK  IP allowlist: Dev Dashboard → app → Settings → IP allowlist: enforced, with IPv4 and IPv6, tested against recent traffic ...
+CHECK  protected customer data: Dev Dashboard → Settings → Access requests: granted (not in review) for the PRODUCTION app ...
+WARN   billing source: Plan read from currentAppInstallation.activeSubscriptions. With Shopify App Pricing ... the Admin API shows nothing ...
+WARN   dependency automation: No Dependabot or Renovate config; Shopify's security check flags MISSING_DEPENDENCY_SECURITY_AUTOMATION.
 
-2 fail, 1 warn, 1 info. Confirm each in the code before reporting it.
+2 fail, 2 warn, 2 to check by hand, 0 info. Confirm each in the code before reporting it.
 ```
 
-It exits with `1` when there's a `FAIL`, so it can run in CI. Findings are
-leads, not verdicts. It can't see the Partner Dashboard, your production
+It exits with `1` when there's a `FAIL`, so it can run in CI. `CHECK` lines
+are things code can't show (IP allowlist, protected customer data approval)
+that a person has to confirm in the Dev Dashboard. Findings are leads, not
+verdicts. It can't see the Partner Dashboard, your production
 environment or runtime behaviour; the checklist and the reviewer flows cover
 those.
 
@@ -104,9 +118,11 @@ those.
 SKILL.md                           the workflow: audit, handling a rejection, report and notes templates
 references/rejections.md           every rejection and near-miss, newest first
 references/checklist.md            the pre-submission checklist, by area
-references/billing.md              managed pricing and the Billing API, done the way that passes
+references/billing.md              Shopify App Pricing (and what changed on 2026-04-28), the Billing API
+references/security.md             Shopify's security checks, IP allowlist, tokens, PCD Level 1/2 obligations
 references/embedded-app.md         install, the iframe gate, CSP, links, error pages, hanging requests
 references/data-and-compliance.md  protected customer data, scopes, GDPR webhooks
+references/storefront-and-extensions.md  theme app extensions, App Proxy, Functions: deploy limits and auth
 references/reviewer-flows.md       what reviewers do, as a script to run on production
 scripts/audit.py                   the static audit
 ```

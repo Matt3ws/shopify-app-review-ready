@@ -10,6 +10,40 @@ Each entry: **Requirement**, **Source**, what Shopify said, **Cause**, **Fix**,
 
 ---
 
+## 2026-11 · All public apps · IP allowlist required (Shopify deadline)
+
+- **Source:** Shopify requirement
+  (shopify.dev/docs/apps/build/security/credentials-and-data/restrict-api-access-to-your-ip-addresses).
+- Shopify: "November 12, 2026: Shopify blocks bulk queries and bulk
+  mutations from public apps that don't have an IP allowlist. November 20,
+  2026: Public apps without an IP allowlist are delisted from the Shopify App
+  Store and blocked from new installs."
+- **Why it matters for review:** without one, the reviewer can't install the
+  app, and a bulk-operation app (backups, exports, syncs) has been broken
+  since the 12th. Custom apps on client stores need one from 2026-11-20 for
+  new installs and 2027-01-01 for all.
+- **Fix:** Dev Dashboard → app → Settings → IP allowlist: the servers' IPv4
+  and IPv6, test against recent traffic, enforce, confirm a 403 from outside.
+  One per app, even when apps share a server. See
+  [security.md](security.md#deadlines-that-block-installs).
+- **Detect:** a Dev Dashboard check, not code. It's the first item in every
+  readiness report.
+
+## 2026-11 · Backup Hero · near-miss · copied the wrong billing pattern
+
+- **Source:** own audit, the day before resubmitting.
+- **Cause:** to fix 1.2.2, the plan read was moved from the Partner API to
+  the Admin API's `currentAppInstallation`, copying an older approved app.
+  For Shopify App Pricing after 2026-04-28 that returns nothing: the docs say
+  status "comes from the Partner API, not from the GraphQL Admin API". The
+  app would have shown "no plan" right after the reviewer chose one. A
+  dev-store probe had already returned "none", and that was the warning.
+- **Fix:** reverted to the Partner API with a short cache for confirmed
+  plans only.
+- **Lesson:** an approved sibling app is precedent, not proof. Platform
+  behaviour changes by date; check the current docs (`shopify doc fetch`)
+  before copying billing, install or security code.
+
 ## 2026-11 · Backup Hero · submission paused (cooldown)
 
 - **Source:** App Review email.
@@ -32,17 +66,18 @@ Each entry: **Requirement**, **Source**, what Shopify said, **Cause**, **Fix**,
   Partner API at most every 6 hours. The `app/uninstalled` handler wrote
   "no plan" **and** stamped it as freshly synced, so the first opens after a
   reinstall trusted that and never asked Shopify.
-- **Fix:** read `currentAppInstallation.activeSubscriptions` (Admin API, the
-  shop's own token) on every app open, with no TTL. Uninstall may clear the
+- **Fix:** keep reading the Partner API's `activeSubscription` (with
+  Shopify App Pricing that is the only source), but cache only a **confirmed**
+  plan, for five minutes, and never cache "no plan". Uninstall may clear the
   stored plan but must not mark it synced. See [billing.md](billing.md).
 - **Note:** a managed-pricing subscription can stay active after an
   uninstall until its period ends (the reviewer's own words). One of our
   READMEs said the opposite. Don't design around either assumption: read it
   live.
-- **Detect:** a TTL or "synced at" check guarding the plan read; the plan
-  being read from the Partner API; an uninstall handler that writes plan
-  state with a timestamp. `scripts/audit.py` flags Partner API use and plan
-  TTL constants.
+- **Detect:**
+  - A long TTL, or one that also covers "no plan", guarding the plan read.
+  - An uninstall handler that writes plan state with a timestamp.
+  - `scripts/audit.py` flags plan TTL constants.
 
 ## 2026-11 · Backup Hero · 2.1.1 · restored product came back without images
 
@@ -73,11 +108,27 @@ Each entry: **Requirement**, **Source**, what Shopify said, **Cause**, **Fix**,
 - **Fix:** add `app/not-found.tsx` rendering the app's own not-found page.
 - **Detect:** `scripts/audit.py` checks for the root file.
 
+## 2026-11 · Heart of Wool · storefront endpoint signed tokens for anyone
+
+- **Source:** own security fix (a custom app; the pattern is in older public code too).
+- **Cause:** `/api/v1/auth/token` took `customerId` and `shop` from the
+  request body behind CORS `*` and signed a JWT, so anyone could read and
+  change any customer's subscriptions. An older app did the same, and picked
+  the store's Admin token by the `Referer` header.
+- **Fix:** storefront endpoints behind the App Proxy; the customer comes
+  from the signed `logged_in_customer_id`; ownership checked on every write;
+  anonymous requests get 401. See
+  [storefront-and-extensions.md](storefront-and-extensions.md).
+- **Detect:** storefront routes reading `customerId`/`shop` from the body;
+  `jwt.sign`; `Access-Control-Allow-Origin: *`.
+
 ## 2026-10 · Backup Hero · 1.1.3 · themes may not be downloadable
 
 - **Source:** App Store self-review before submission.
 - **Cause:** the app backed up themes and offered them as a zip download.
-  Requirement 1.1.3 doesn't allow an app to let merchants download themes.
+  Requirement 1.1.3 doesn't allow an app to let merchants download themes,
+  and the self-review also flags Themes API calls that **create or upload**
+  themes, so restoring a theme is out too.
 - **Fix:** removed theme capture, the download and the `read_themes` scope.
 - **Detect:** `read_themes` in scopes; any theme file export.
 
@@ -101,7 +152,7 @@ Each entry: **Requirement**, **Source**, what Shopify said, **Cause**, **Fix**,
 - **Detect:** `scripts/audit.py` flags `'use server'` files that take a
   `shop`, raw `frame-ancestors` interpolation, and logged tokens.
 
-## 2026-10 · Discount Buddy · 1.3 · no custom review prompts
+## 2026-10 · Discount Buddy · 1.3.1 · no custom review prompts
 
 - **Source:** Shopify guidance found while building (the requirement text
   doesn't spell it out).
@@ -112,6 +163,123 @@ Each entry: **Requirement**, **Source**, what Shopify said, **Cause**, **Fix**,
   feedback form, no incentive.
 - **Detect:** links to `apps.shopify.com/.../reviews` or star/feedback modals
   in the UI.
+
+## 2026-10 · Store Sync · store credentials sent to the browser
+
+- **Source:** own security audit of a public app.
+- **Cause:** three routes returned full `Store` rows. Any merchant in a store
+  network could read the other stores' access and refresh tokens in
+  DevTools.
+- **Fix:** omit secret columns everywhere a store is returned (a shared
+  `STORE_SECRET_FIELDS` with Prisma `omit`), plus a unit test that fails if
+  one comes back.
+- **Detect:** API routes returning `prisma.store.find*` (or any row holding
+  tokens) without `select`/`omit`.
+
+## 2026-10 · Store Sync · `app_subscriptions/update` arrives twice on a plan switch
+
+- **Source:** own fix after merchants reverted to their old plan.
+- **Cause:** a plan switch sends one webhook for the new subscription
+  (`ACTIVE`) and one for the old (`CANCELLED`), in no guaranteed order. The
+  handler wrote whichever came last.
+- **Fix:** let only `ACTIVE` set the plan. Better still, treat the webhook as a
+  trigger and re-read `currentAppInstallation.activeSubscriptions`.
+- **Detect:** a subscription webhook handler that writes the plan from the
+  payload without checking the status.
+
+## 2026-10 · Store Sync · GDPR deletion silently rolled back
+
+- **Source:** own fix.
+- **Cause:** the delete transaction for `app/uninstalled` and `shop/redact`
+  hit a foreign-key violation on two models with no cascade, so nothing was
+  deleted, and the webhook still got its 200.
+- **Fix:** delete those models in the transaction, plus a test that reads the
+  schema and fails when a new model references the shop without a cascade or
+  an explicit delete.
+- **Detect:** relations to the shop/store model without `onDelete: Cascade`
+  that the redact code doesn't delete.
+
+## 2026-10 · Store Sync · billing page promised a trial that doesn't exist
+
+- **Source:** own audit.
+- **Cause:** copy said "7-day free trial"; the plans had none.
+- **Fix and detect:** `grep -rni 'trial' translations/ components/` and
+  compare every price, trial and plan name with the Partner Dashboard.
+
+## 2026-09 · Tropica · deploy gates on theme extensions
+
+- **Source:** Shopify deploy refused.
+- Shopify: "Extension Liquid content size exceeds 100 KB limit" (all
+  `blocks/` + `snippets/` Liquid together, comments included), and a failed
+  deploy on `{{ '{' }}` brace escapes. Also: renaming a block file removes it
+  from every live theme, and app snippets are wrapped in HTML comments.
+- **Fix and detect:** see
+  [storefront-and-extensions.md](storefront-and-extensions.md).
+
+## 2026-09 · Tropica · a valid App Proxy signature doesn't authorize the params
+
+- **Source:** own audit.
+- **Cause:** Shopify signs every query param, including ones a logged-in
+  customer added (`?kk_customer=999`), so signature verification passed while
+  serving another customer's data.
+- **Fix:** check every param that selects whose data to show against
+  `logged_in_customer_id`, on every request.
+- **Detect:** App Proxy routes reading a customer, company or location id
+  from `searchParams`.
+
+## 2026-09 · Store Sync · scopes added later, and queries needing a missing scope
+
+- **Source:** own fix.
+- **Cause:** one query needed `read_locales`, which wasn't requested, and
+  whole product webhooks failed. After a scope is added, existing installs
+  get "Access denied" until the merchant opens the app and approves.
+- **Fix:** check each query's required scopes against the toml; handle
+  `ACCESS_DENIED` per resource; don't let one missing scope fail unrelated
+  work.
+
+## 2026-09 · Store Sync · production ran without an encryption key
+
+- **Source:** own audit.
+- **Cause:** encryption at rest for access tokens was dropped because
+  production had no `ENCRYPTION_KEY`, so tokens were stored in plain text.
+- **Fix:** require the key in the env schema (outside tests) and fail at
+  boot, not at first encrypt. Shopify's protected customer data requirements
+  expect encryption at rest anyway.
+- **Detect:** `grep -n ENCRYPTION env.ts`.
+
+## 2026-08 → 2026-09 · Bundle Hero · 2.1.4 · failed three rounds: orders and revenue showed zero
+
+- **Source:** App Review rejection, three times, before approval (2026-11).
+- Shopify: the app's core data (bundle orders and revenue) showed zero on the
+  reviewer's store while the bundle discount visibly worked (requirement
+  2.1.4, data synchronization).
+- **Causes:** three, each enough on its own:
+  1. **Protected customer data wasn't approved, only requested.** Development
+     stores are exempt from the PCD gate, so every test on the team's own dev
+     stores passed. The reviewer's store isn't a dev store; order reads there
+     returned `ACCESS_DENIED`. The gate is on the `Order` object itself, not
+     only on personal fields: an app that reads no names or emails still needs
+     Level 1 access to read orders.
+  2. **Test orders were filtered out** of the analytics on non-dev stores.
+     Reviewers place test orders (Bogus Gateway); they saw a page of zeros.
+  3. **A misconfigured Redis key** in production stopped the webhook
+     workers.
+- **Fix:**
+  - Get PCD **granted** (not "in review") for the production app before
+    submitting.
+  - Count test orders in everything a reviewer looks at; exclude them only
+    from billing usage.
+  - Raise a loud alert on `ACCESS_DENIED`.
+  - Verify production health (`/api/health`, worker heartbeat) before
+    submitting.
+  - Test on a **non-dev trial store**: a dev-store pass proves nothing about
+    the gates a reviewer's store hits.
+  - Document the data-sync design (webhooks that correct, idempotent
+    rewrites, a nightly reconcile) for the reviewer.
+- **Detect:**
+  - Filters on `test` orders in features the reviewer sees.
+  - Order or customer reads with no `ACCESS_DENIED` handling.
+  - Any submission verified only on development stores.
 
 ## 2026-08 · Super Siblings · "selecting a paid plan results into an error 404 page"
 
@@ -143,8 +311,9 @@ Each entry: **Requirement**, **Source**, what Shopify said, **Cause**, **Fix**,
 
 - **Source:** own launch audit; the deploy limits are enforced by Shopify.
 - Production toml was missing `app_subscriptions/update`, so a downgraded
-  shop kept paid features live (a terms problem). Every public app now
-  subscribes to it.
+  shop kept paid features live (a terms problem). That webhook only exists
+  for App Pricing apps enrolled before April 2026; newer apps get no webhook
+  and must read the Partner API (see [billing.md](billing.md)).
 - A sidebar page named `/debug` looked unfinished to a reviewer; renamed
   `/simulator`. Name pages for merchants.
 - Template debris invited reviewer questions: unused mutations (an unused
@@ -152,6 +321,30 @@ Each entry: **Requirement**, **Source**, what Shopify said, **Cause**, **Fix**,
   template name in `package.json` and README, a hardcoded Danish tab title.
 - Shopify Functions: Wasm must be at most 256 KB, and each input query has
   a complexity cap of 30. Deploy rejects either; CI can't see it.
+
+## 2026-06 → 08 · App template · token and webhook lifecycle
+
+- **Source:** Shopify requirement plus own fixes; every app inherits the
+  template.
+- **Expiring offline tokens are required** for public apps:
+  `tokenExchange({ expiring: true })`. Refresh tokens die after about 90 days
+  idle, so a daily job must refresh idle shops, or webhooks stop until the
+  merchant reinstalls. Never token-exchange on every request: Shopify keeps one
+  active refresh token, and each exchange retires the stored one.
+- **A revoked token isn't an expired one.** After an uninstall and reinstall,
+  the session-sync fast path reused the dead token and every Admin call got
+  401. `app/uninstalled` now marks the shop (deleting nothing until
+  `shop/redact`), session sync re-exchanges for a marked shop, and scheduled
+  jobs skip it.
+- **Webhook dedup ran before HMAC and was never released.** A forged request
+  could poison dedup, and if a handler failed after claiming the event,
+  Shopify's retry was answered "Duplicate". That's fatal for compliance
+  webhooks. Verify HMAC first, and release the claim on any non-2xx.
+- **Detect:**
+  - `tokenExchange` without `expiring: true`, or inside request
+    middleware.
+  - A session-sync fast path with no uninstalled check.
+  - The order of the dedup and HMAC steps in the webhook middleware.
 
 ## 2026-07 / 08 · Hide It; Checkout · protected customer data blocks deploy
 

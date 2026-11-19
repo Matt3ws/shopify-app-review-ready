@@ -1,9 +1,26 @@
 # The flows a reviewer runs
 
-Run these on the **production** app, on a fresh development store, in a
-browser with third-party cookies blocked (incognito). Watch the network tab
-for 4xx/5xx and the console for errors throughout. Record a screencast; it
-goes with the submission.
+Run these on the **production** app, in a browser with third-party cookies
+blocked (incognito). Watch the network tab for 4xx/5xx and the console for
+errors throughout. Record a screencast; it goes with the submission.
+
+Use two stores:
+
+- **A fresh development store**, for the plan flows: test charges are free.
+- **A non-development store**, such as a trial store, for everything that
+  reads orders or customers. Development stores are **exempt** from the
+  protected customer data gate, so a feature can pass every dev-store test
+  and show zeros on the reviewer's store. That cost Bundle Hero three review
+  rounds.
+
+Place orders the way a reviewer does: test orders with the Bogus Gateway.
+Anything that filters out test orders will look empty to them.
+
+The reviewer's dev store belongs to **another** Partner organization. On
+such a store, only free plans and paid plans marked "free for partners and
+developers" can be selected at no charge, so check that setting, and test from
+a store your organization doesn't own if you can. Use the listing's language
+on the store: the plan page can 404 for a draft app when the locales differ.
 
 ## 1. Install and first minute
 1. Install from the production app's install link.
@@ -56,9 +73,18 @@ shopify app webhook trigger --topic customers/redact --address ...
 shopify app webhook trigger --topic shop/redact --address ...
 ```
 Expect 200 for valid deliveries. A request with a wrong HMAC must get 401
-(`curl -X POST -H 'X-Shopify-Hmac-Sha256: bad' <url>`).
+(`curl -X POST -H 'X-Shopify-Hmac-Sha256: bad' <url>`). `webhook trigger`
+only sends a sample; confirm the subscriptions themselves in the production
+toml / Dev Dashboard.
 
-## 7. Production health during review
+## 7. Shopify's own checks
+- `shopify app security check`, and fix everything it reports.
+- The self-review list (`shopify doc fetch --url https://shopify.dev/docs/apps/launch/app-store-review/app-store-ai-self-review-requirements`).
+- IP allowlist enforced for the production app (Dev Dashboard), tested
+  against recent traffic.
+- An outside port scan shows only 80/443 (and SSH if you must).
+
+## 8. Production health during review
 - Workers running, queue not backed up, monitoring green.
 - Production env has every variable the billing and plan links need.
 - Nothing deployed mid-review that changes the flows above.

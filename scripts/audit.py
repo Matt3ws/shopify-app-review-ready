@@ -24,7 +24,7 @@ CODE_EXT = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 
 @dataclass
 class Finding:
-    level: str  # FAIL, WARN, INFO
+    level: str  # FAIL, WARN, CHECK (needs a human), INFO
     check: str
     detail: str
     where: str = ""
@@ -40,7 +40,7 @@ def add(level: str, check: str, detail: str, where: str = "") -> None:
 def code_files(root: Path) -> list[Path]:
     out = []
     for path in root.rglob("*"):
-        if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
+        if any(part in SKIP_DIRS or part.startswith("__tests__") for part in path.relative_to(root).parts):
             continue
         if path.is_file() and path.suffix in CODE_EXT:
             out.append(path)
@@ -81,7 +81,7 @@ def check_tomls(root: Path) -> None:
     if re.search(r"use_legacy_install_flow\s*=\s*true", text):
         add("WARN", "legacy install", "use_legacy_install_flow = true; reviewers expect Shopify-managed install.", "shopify.app.toml")
     if "app_subscriptions/update" not in text:
-        add("WARN", "app_subscriptions/update", "Production toml doesn't subscribe to app_subscriptions/update; plan changes made while the app is closed go unseen (every approved Edition app has it). Editing the prod toml needs explicit confirmation.", "shopify.app.toml")
+        add("INFO", "app_subscriptions/update", "No app_subscriptions/update subscription. Only App Pricing apps enrolled before April 2026 (or Billing API apps) receive it; newer App Pricing apps must poll the Partner API instead.", "shopify.app.toml")
     for topic in ("customers/data_request", "customers/redact", "shop/redact"):
         if topic not in text:
             add("FAIL", "compliance webhooks", f"Compliance topic {topic} not subscribed in the production toml.", "shopify.app.toml")
@@ -99,8 +99,13 @@ def check_tomls(root: Path) -> None:
         pii = {"read_customers", "write_customers", "read_orders", "write_orders", "read_draft_orders", "write_draft_orders"} & set(scope_list)
         if pii:
             add("INFO", "protected customer data", f"Scopes {sorted(pii)}: check PCD approval (and Level 2 fields) for the PRODUCTION app.", "shopify.app.toml")
+    app_url = re.search(r'application_url\s*=\s*"([^"]+)"', text)
+    app_host = re.sub(r"^https?://([^/]+).*$", r"\1", app_url.group(1)) if app_url else None
     for m in re.finditer(r'redirect_urls\s*=\s*\[([^\]]*)\]', text):
         for url in re.findall(r'"([^"]+)"', m.group(1)):
+            host = re.sub(r"^https?://([^/]+).*$", r"\1", url)
+            if app_host and host != app_host:
+                add("FAIL", "redirect_urls", f"redirect_urls host {host} differs from application_url host {app_host}; an OAuth fallback then fails the install.", "shopify.app.toml")
             path = re.sub(r"^https?://[^/]+", "", url).strip("/")
             if path and not (root / "app" / path).exists() and not (root / "app" / "(shopify)" / path).exists():
                 add("INFO", "redirect_urls", f"redirect_urls has {url}, but app/{path} doesn't exist (harmless with managed install; template leftover).", "shopify.app.toml")
@@ -143,14 +148,14 @@ def check_proxy(root: Path) -> None:
 
 
 def check_code(root: Path, files: list[Path]) -> None:
-    hits = grep(files, r"partners\.shopify\.com", root)
+    uses_partner = bool(grep(files, r"partners\.shopify\.com|activeSubscription\(", root))
+    uses_admin_subs = bool(grep(files, r"activeSubscriptions", root))
+    if uses_admin_subs and not uses_partner and grep(files, r"planHandle|plan_handle", root):
+        add("WARN", "billing source", "Plan read from currentAppInstallation.activeSubscriptions. With Shopify App Pricing (enrolled after April 2026) status comes only from the Partner API activeSubscription; the Admin API shows nothing. Fine only for pre-April App Pricing or Billing API apps.")
+    # A short cache of a confirmed plan is Shopify's own advice; hours are not.
+    hits = grep([f for f in files if re.search(r"billing|subscription|plan-sync|plan-state", str(f), re.I)], r"(PLAN|plan|Plan)\w*(TTL|Ttl|_MS)\w*\s*=\s*[^;]*(3_?600_?000|60\s*\*\s*60\s*\*|86_?400|\bhour)", root)
     if hits:
-        add("WARN", "billing source", f"Partner API use ({short(hits)}). Read the plan from currentAppInstallation.activeSubscriptions instead (1.2.2).")
-    if not grep(files, r"currentAppInstallation", root) and grep(files, r"planHandle|plan_handle|appSubscription", root):
-        add("WARN", "billing source", "Billing code found but no currentAppInstallation query; check how the plan is read.")
-    hits = grep(files, r"PLAN_SYNC_TTL|PLAN_.*TTL|planSyncedAt\s*[^=]*<\s*\w*TTL", root)
-    if hits:
-        add("WARN", "plan cache", f"Plan read appears to sit behind a TTL ({short(hits)}); a reinstall then shows stale state (1.2.2).")
+        add("WARN", "plan cache", f"Plan read cached for hours ({short(hits)}); cache only a confirmed plan, for minutes, and never \"no plan\" (1.2.2).")
 
     hits = grep(files, r"/admin/api/[0-9-]+/[a-z_/]+\.json|clients\.Rest|new\s+Rest\(", root)
     if hits:
@@ -198,6 +203,84 @@ def check_code(root: Path, files: list[Path]) -> None:
     dev_named = [str(p.relative_to(root)) for p in debug_pages if re.search(r"/(debug|test|playground|dev)/", "/" + str(p.relative_to(root)) )]
     if dev_named:
         add("WARN", "naming", f"Developer-sounding pages: {short(dev_named)}.")
+
+
+def check_customer_data(root: Path, files: list[Path]) -> None:
+    toml = read(root / "shopify.app.toml")
+    scopes = re.search(r'scopes\s*=\s*"([^"]*)"', toml)
+    scope_list = {s.strip() for s in scopes.group(1).split(",")} if scopes else set()
+    if scope_list & {"read_orders", "read_customers", "read_draft_orders", "write_orders", "write_customers"}:
+        if not grep(files, r"ACCESS_DENIED|access denied|AccessDenied", root, re.I):
+            add("WARN", "protected customer data", "The app reads orders/customers but nothing handles ACCESS_DENIED. Without granted PCD a reviewer's (non-dev) store is refused and the feature shows nothing; Bundle Hero failed review 3x on this.")
+    # Excluding test orders from billing usage is right; only flag it elsewhere.
+    hits = grep([f for f in files if "billing" not in str(f).lower()], r"test:\s*false|-test:true|NOT\s+test|\btest\s*!==?\s*true|excludeTest|isTest\s*\?", root)
+    if hits:
+        add("WARN", "test orders", f"Test orders look filtered out ({short(hits)}). Reviewers place test orders; exclude them only from billing usage, never from what they look at.")
+
+
+def check_extensions(root: Path) -> None:
+    ext_root = root / "extensions"
+    if not ext_root.is_dir():
+        return
+    for ext in sorted(d for d in ext_root.iterdir() if d.is_dir()):
+        liquid = [f for f in ext.rglob("*.liquid") if "node_modules" not in f.parts]
+        if not liquid:
+            continue
+        total = sum(len(read(f).encode("utf-8")) for f in liquid if f.parent.name in ("blocks", "snippets"))
+        if total > 102_400:
+            add("FAIL", "extension Liquid size", f"{ext.name}: blocks+snippets Liquid is {total // 1024} KB; Shopify refuses deploys over 100 KB.", str(ext.relative_to(root)))
+        elif total > 90_000:
+            add("WARN", "extension Liquid size", f"{ext.name}: blocks+snippets Liquid is {total // 1024} KB, close to the 100 KB deploy limit.", str(ext.relative_to(root)))
+        for f in liquid:
+            for n, line in enumerate(read(f).splitlines(), 1):
+                if re.search(r"\{\{\s*'[{}]'\s*\}\}", line):
+                    add("FAIL", "Liquid brace escape", "{{ '{' }}-style escapes break `shopify app deploy`; use {% raw %} or build the string in JS.", f"{f.relative_to(root)}:{n}")
+
+
+def check_secrets_and_tokens(root: Path, files: list[Path]) -> None:
+    for f in files:
+        text = read(f)
+        if "tokenExchange(" in text and "expiring" not in text:
+            add("WARN", "expiring tokens", "tokenExchange without `expiring: true`; public apps must use expiring offline tokens.", str(f.relative_to(root)))
+    api_files = [f for f in files if "/api/" in str(f) or f.name.startswith("route.")]
+    leaks = []
+    for f in api_files:
+        lines = read(f).splitlines()
+        for n, line in enumerate(lines, 1):
+            if re.search(r"prisma\.store\.find(Unique|First|Many)\(", line):
+                window = " ".join(lines[n - 1 : n + 4])
+                if not re.search(r"\b(select|omit)\b", window):
+                    leaks.append(f"{f.relative_to(root)}:{n}")
+    if leaks:
+        add("WARN", "credentials to browser", f"API routes read whole Store rows without select/omit ({short(leaks)}); make sure tokens never reach a response.")
+    storefront = [f for f in files if re.search(r"storefront|proxy|app-proxy|apps/", str(f.relative_to(root)), re.I) and f.suffix in (".ts", ".js")]
+    for f in storefront:
+        text = read(f)
+        if re.search(r"(req|request)\.(json|body)", text) and re.search(r"customer_?[iI]d|\bshop\b", text) and re.search(r"jwt\.sign|Access-Control-Allow-Origin['\"]?\s*[,:]\s*['\"]\*", text):
+            add("FAIL", "storefront auth", "Storefront endpoint reads customer/shop from the body and signs tokens or allows any origin; take identity only from the App Proxy signature (logged_in_customer_id).", str(f.relative_to(root)))
+    env = root / "env.ts"
+    if env.exists() and grep(files, r"accessToken|refreshToken", root) and "ENCRYPTION" not in read(env):
+        add("WARN", "encryption at rest", "env.ts has no ENCRYPTION_KEY; access tokens (and customer data) should be encrypted at rest.", "env.ts")
+    trial = grep([f for f in files if f.suffix in (".tsx", ".ts")] + list((root / "translations").glob("*.json")) if (root / "translations").is_dir() else files, r"free trial|\d+-day trial|trial", root, re.I)
+    if trial:
+        add("INFO", "pricing copy", f"Trial mentioned in the UI ({short(trial, 3)}); check it matches the Partner Dashboard plans exactly.")
+
+
+def check_platform(root: Path, files: list[Path]) -> None:
+    if (root / "shopify.app.toml").exists():
+        add("CHECK", "IP allowlist", "Dev Dashboard → app → Settings → IP allowlist: enforced, with IPv4 and IPv6, tested against recent traffic. Without it: no bulk operations (since 2026-11-12) and no new installs (since 2026-11-20).")
+        add("CHECK", "protected customer data", "Dev Dashboard → Settings → Access requests: granted (not in review) for the PRODUCTION app, fields justified.")
+        add("CHECK", "security check", "Run `shopify app security check` and the official self-review list.")
+    has_bot = any((root / f).exists() for f in (".github/dependabot.yml", ".github/dependabot.yaml", "renovate.json", "renovate.json5", ".github/renovate.json", ".renovaterc"))
+    if (root / "package.json").exists() and not has_bot:
+        add("WARN", "dependency automation", "No Dependabot or Renovate config; Shopify's security check flags MISSING_DEPENDENCY_SECURITY_AUTOMATION.")
+    pkg = read(root / "package.json")
+    if re.search(r'"@shopify/app-bridge"\s*:', pkg):
+        add("WARN", "2.2.3 App Bridge", "Legacy @shopify/app-bridge npm package; use the CDN script (plus @shopify/app-bridge-react if needed).", "package.json")
+    if (root / "app").is_dir() or (root / "pages").is_dir():
+        csp_sources = [root / n for n in ("proxy.ts", "middleware.ts", "proxy.js", "middleware.js", "next.config.js", "next.config.mjs", "next.config.ts")]
+        if not any("frame-ancestors" in read(f) for f in csp_sources if f.exists()):
+            add("FAIL", "frame-ancestors", "No frame-ancestors header found; Shopify rejects embedded apps without it on every HTML route (MISSING_EMBEDDED_CSP).")
 
 
 def check_package(root: Path) -> None:
@@ -266,20 +349,24 @@ def main() -> int:
     check_next(root, files)
     check_proxy(root)
     check_code(root, files)
+    check_customer_data(root, files)
+    check_extensions(root)
+    check_secrets_and_tokens(root, files)
+    check_platform(root, files)
     check_package(root)
     check_translations(root)
     check_compliance_handlers(root, files)
 
-    order = {"FAIL": 0, "WARN": 1, "INFO": 2}
+    order = {"FAIL": 0, "CHECK": 1, "WARN": 2, "INFO": 3}
     findings.sort(key=lambda f: order[f.level])
     print(f"Shopify review audit: {root.name} ({len(files)} code files)\n")
     if not findings:
         print("No findings. Still walk references/checklist.md and run the reviewer flows.")
     for f in findings:
         where = f" [{f.where}]" if f.where else ""
-        print(f"{f.level:4}  {f.check}: {f.detail}{where}")
+        print(f"{f.level:5}  {f.check}: {f.detail}{where}")
     counts = {lvl: sum(1 for f in findings if f.level == lvl) for lvl in order}
-    print(f"\n{counts['FAIL']} fail, {counts['WARN']} warn, {counts['INFO']} info. Confirm each in the code before reporting it.")
+    print(f"\n{counts['FAIL']} fail, {counts['WARN']} warn, {counts['CHECK']} to check by hand, {counts['INFO']} info. Confirm each in the code before reporting it.")
     return 1 if counts["FAIL"] else 0
 
 
