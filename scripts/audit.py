@@ -290,6 +290,21 @@ def check_platform(root: Path, files: list[Path]) -> None:
             add("FAIL", "frame-ancestors", "No frame-ancestors header found; Shopify rejects embedded apps without it on every HTML route (MISSING_EMBEDDED_CSP).")
 
 
+def check_graphql_documents(root: Path) -> None:
+    pkg = read(root / "package.json")
+    if not pkg:
+        return
+    try:
+        scripts = json.loads(pkg).get("scripts", {})
+    except json.JSONDecodeError:
+        return
+    checks = [name for name in scripts if re.search(r"graphql|codegen", name, re.I) and re.search(r"check", name, re.I)]
+    if checks:
+        add("CHECK", "deprecated GraphQL", f"Run {', '.join(f'pnpm {name}' for name in checks)} and fix every deprecation. Codegen and tsc accept deprecated fields; they surface in API health and break when removed.")
+    elif (root / "shopify.app.toml").exists():
+        add("CHECK", "deprecated GraphQL", "No schema-aware GraphQL document check in package.json. Check the app's API health in the Partner Dashboard for deprecated fields; codegen and tsc don't flag them.")
+
+
 def check_package(root: Path) -> None:
     pkg = root / "package.json"
     if not pkg.exists():
@@ -394,6 +409,7 @@ def main() -> int:
     check_extensions(root)
     check_secrets_and_tokens(root, files)
     check_platform(root, files)
+    check_graphql_documents(root)
     check_package(root)
     check_translations(root)
     check_compliance_handlers(root, files)

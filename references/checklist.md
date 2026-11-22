@@ -100,6 +100,10 @@ re-check it, because numbering and rules change.
       `*.myshopify.com` fallback.
 - [ ] GraphQL Admin API only (2.2.4); API version at least 90 days from
       deprecation.
+- [ ] No deprecated fields or arguments in any GraphQL document: check the
+      app's API health in the Partner Dashboard, and run the repo's own
+      document check if it has one (`pnpm graphql:check-scripts` in our
+      template). Codegen and `tsc` accept deprecated fields without a word.
 - [ ] Every listed language complete in the UI (4.3.2); no hardcoded strings.
 - [ ] No dev-sounding pages, template names or debris.
 - [ ] Reviews: neutral, no incentives (1.3.1); only via

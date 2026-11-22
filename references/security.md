@@ -189,6 +189,13 @@ on 2027-01-01, and Shopify rejects their API requests from 2027-04-01.
 - Dependabot or Renovate on every repo, and act on what they raise.
 - Keep the framework on a patched version, and the API version at least 90
   days from deprecation (apps can't be submitted otherwise).
+- Deprecated **fields** count too, not just the version: a field marked
+  deprecated is removed in a later version, shows up in the app's API health
+  report, and breaks the app when it's gone. Replace it when you see the
+  warning, using the replacement its deprecation note names (e.g.
+  `Publication.app` → the publication's `catalog { ... on AppCatalog { apps } }`).
+  Codegen and the TypeScript compiler don't flag them; a schema-aware check
+  does.
 
 ## Protected customer data obligations
 

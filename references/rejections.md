@@ -10,6 +10,24 @@ Each entry: **Requirement**, **Source**, what Shopify said, **Cause**, **Fix**,
 
 ---
 
+## 2026-11 · Backup Hero · near-miss · a deprecated field in a new query
+
+- **Source:** the repo's CI (`pnpm graphql:check-scripts`), after the PR was
+  green locally.
+- **Cause:** a new query selected `Publication.app`, deprecated in favour of
+  the publication's `AppCatalog` apps. Codegen generated types for it and `tsc`
+  passed, so nothing local complained. The same run also caught two queries
+  passing an identifier as an inline object, which is a house rule of our
+  template rather than a Shopify one.
+- **Why it matters for review:** deprecated fields show up in the Partner
+  Dashboard's API health and are removed in a later API version. Shopify
+  won't take a submission that depends on something removed within 90 days.
+- **Fix:** use the replacement the deprecation note names; run the repo's
+  GraphQL checks before pushing, not only typecheck and tests.
+- **Detect:** API health in the Partner Dashboard; a schema-aware document
+  check (`pnpm graphql:check-scripts` in our template); `scripts/audit.py`
+  reminds you to run it.
+
 ## 2026-11 · All public apps · IP allowlist required (Shopify deadline)
 
 - **Source:** Shopify requirement
