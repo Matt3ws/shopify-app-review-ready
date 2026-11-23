@@ -77,6 +77,14 @@ re-check it, because numbering and rules change.
       location before it's set; references remapped from old ids to the new
       records (menus, metaobject and collection-condition references); images
       and custom fields on every resource the UI mentions.
+- [ ] Apps that back up and restore: decide whether files (images, videos)
+      are stored. Shopify deletes a deleted product's images, so links alone
+      can't restore them. If files aren't stored, say so in the UI and
+      listing, never promise images, skip dead links quietly on restore, and
+      leave images out of the comparison.
+- [ ] Custom fields are written one at a time: legacy types renamed,
+      references to deleted records dropped, a refused field drops only
+      itself.
 - [ ] Every limit the code knows about (caveats, unsupported fields) is
       **shown in the UI** where the merchant chooses or approves. A caveat in
       a code comment or an unused array discloses nothing.

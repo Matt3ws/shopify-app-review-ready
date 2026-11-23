@@ -10,6 +10,50 @@ Each entry: **Requirement**, **Source**, what Shopify said, **Cause**, **Fix**,
 
 ---
 
+## 2026-11 · Backup Hero · deleting a product deletes its images
+
+- **Source:** dev-store test of the 2.1.1 fix, and Shopify's docs.
+- Shopify (`productDelete`): "Permanently deletes a product and all its
+  associated data, including … Product media (images, videos) that are not
+  referenced by other products".
+- **What it means:** a backup that keeps only image links or file ids can't
+  bring back the images of a deleted product. By the time of the restore the
+  file is gone from Files and its CDN URL answers 404. Handing the dead URL to
+  `productSet` leaves a `FAILED` image on the product, which looks broken.
+  Collections and blog post images behave the same way.
+- **Two honest options:**
+  - **Store the image files.** One deduplicated store per shop, fetching only
+    new images, restored through a short-lived signed link. Large: ~130,000
+    images ≈ 27 GB on our dev store.
+  - **Don't back up images, and say so** where merchants choose what to back
+    up. On restore, attach files Shopify still has (by id, or a URL that still
+    serves) and skip the rest quietly. Leave images out of the comparison, or
+    a product whose image is gone plans as changed forever. Backup Hero chose
+    this.
+- **Review:** the 2.1.1 test deletes a product and restores it. With the
+  second option the images don't come back, so the listing, the backup
+  settings and the testing notes must not promise images.
+- **Detect:** a restore that writes media from captured URLs without checking
+  they still serve; copy that promises images when no files are stored.
+
+## 2026-11 · Backup Hero · one refused custom field dropped them all
+
+- **Source:** dev-store test.
+- **Cause:** Shopify refuses a whole `metafields` list over one bad field, and
+  the restore dropped the list. A product came back with none of its eight
+  fields. The bad ones:
+  - a `list.product_reference` naming deleted products;
+  - legacy type names (`string`) that Shopify still returns but won't accept.
+- **Fix:**
+  - Rename legacy types (`string` → `single_line_text_field`, `integer` →
+    `number_integer`, `json_string` → `json`).
+  - Leave `global.title_tag`/`description_tag` to `seo`.
+  - Drop references to records that no longer exist (one `nodes(ids:)` call).
+  - Drop whatever Shopify still refuses one field at a time, read from the
+    error's field path (`['input','metafields','3',…]`), and name the dropped
+    fields.
+- **Detect:** a retry that drops all of `metafields` on any metafield error.
+
 ## 2026-11 · Backup Hero · near-miss · a deprecated field in a new query
 
 - **Source:** the repo's CI (`pnpm graphql:check-scripts`), after the PR was
@@ -157,12 +201,17 @@ Each entry: **Requirement**, **Source**, what Shopify said, **Cause**, **Fix**,
   `productSet` call never sent `files` or `metafields`. Also, the diff that
   decides what needs restoring didn't compare media, so a product that only
   lost an image was never restored.
-- **Fix:** write `files` (reuse existing file ids where they still exist,
-  re-upload images from the captured URL otherwise; hosted video/3D need a
-  staged upload so they only come back while the file exists), variant `file`,
-  and `metafields`; add media (type + alt text, not URL) to the comparison.
+- **First fix, which didn't hold:** write `files` from the captured URLs. A
+  dev-store test showed Shopify deletes a product's image files together
+  with the product, so the URL already answers 404 and the image came back
+  `FAILED`. See "deleting a product deletes its images" above.
+- **Where it ended:** images are not backed up, the app says so where
+  merchants choose what to back up ("Images aren't backed up"), and a restore
+  attaches only files Shopify still has, skipping the rest quietly.
+  `metafields` are written one field at a time.
 - **Lesson:** the UI said "With variants, images and custom fields". Every
-  word of that is a test the reviewer will run.
+  word of that is a test the reviewer will run, so don't promise what the
+  backup can't hold.
 - **Detect:** for each option the UI or listing advertises, find where it is
   captured and where it is written back. A field that is only on one side is
   this bug.
