@@ -57,6 +57,33 @@ For each feature and each option the UI offers:
    description, variants, prices, images, variant images, custom fields).
 4. Note how long background work takes; put it in the testing notes.
 
+### Every path, not only the reviewer's
+A restore creates a record that was deleted, overwrites one that still
+exists, and can be undone, and the three take different code paths. Test
+each one live and check the result through the Admin API:
+
+- **Create:** delete a record, restore it. Fields, custom fields, sales
+  channels, and images (or that missing images are skipped cleanly).
+- **Overwrite:** change a field and a custom field on a record that still
+  exists, restore. The preview shows exactly that one record; the changed
+  values come back; what the app doesn't back up (images) is left untouched.
+- **Undo:** undo that restore. Every value goes back to what it was before
+  the restore, custom fields included.
+
+Unit tests passed for all three in Backup Hero while undo silently skipped
+custom fields; the live round found it.
+
+### Test on data you can afford to lose
+Deleting a product makes Shopify delete its image files for good, and a
+restore can't bring them back unless the app stores files. Backup Hero's
+first test deleted a real product and lost its image.
+
+- Run destructive tests on a product created for the test, or one whose
+  images may be lost. Never use a merchant's catalogue product.
+- Record the before-state through the API (title, media ids, custom fields,
+  publications).
+- Put everything back afterwards, and check it.
+
 ## 5. Failure paths
 - A feature that needs data the store doesn't have shows guidance, not an
   error.

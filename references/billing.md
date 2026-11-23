@@ -138,6 +138,13 @@ Partner API answers for both.
 
 ## Testing plans, and the reviewer's store
 
+- **The plan flow can only be tested on the production app.** The Partner
+  API answers for public apps, and a dev app usually has no Partner API
+  credentials, so its stored plan is never confirmed: Backup Hero's dev app
+  showed "Pro, synced 2 Nov" weeks later, left over from an old plan-picker
+  redirect. Test plan reads, the no-plan redirect and reinstall during a paid
+  cycle on a store with the production app installed.
+
 - Development stores test App Pricing **at no charge**, but which plans
   depend on who owns the app and the store. On a dev store owned by
   **another** Partner organization, which is what a reviewer uses, only free

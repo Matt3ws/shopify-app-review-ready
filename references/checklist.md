@@ -23,7 +23,8 @@ re-check it, because numbering and rules change.
 - [ ] **Production runs the code you audited.** After deploying, repeat the key
       checks against the live URL (e.g. `curl -s -o /dev/null -w '%{http_code}'
       -H 'sec-fetch-site: cross-site' '<app>/billing/confirm?shop=x.myshopify.com&plan_handle=p'`
-      must not be 404).
+      must not be 404), and search the live `/_next/static/…js` scripts for a
+      string only the new build has.
 
 ## 1. Install and session (2.3.x, 3.1.2)
 - [ ] Shopify-managed install; install lands in the app UI with no login.
@@ -85,6 +86,8 @@ re-check it, because numbering and rules change.
 - [ ] Custom fields are written one at a time: legacy types renamed,
       references to deleted records dropped, a refused field drops only
       itself.
+- [ ] Restore paths tested live: create, overwrite and undo. Undo puts
+      back everything the restore writes (custom fields included).
 - [ ] Every limit the code knows about (caveats, unsupported fields) is
       **shown in the UI** where the merchant chooses or approves. A caveat in
       a code comment or an unused array discloses nothing.

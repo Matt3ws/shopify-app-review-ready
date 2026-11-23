@@ -10,6 +10,20 @@ Each entry: **Requirement**, **Source**, what Shopify said, **Cause**, **Fix**,
 
 ---
 
+## 2026-11 · Backup Hero · undo didn't put custom fields back
+
+- **Source:** live overwrite-and-undo test on the dev store.
+- **Cause:** the restore had started writing custom fields, but the copy taken
+  before an overwrite (the one undo writes back) didn't read them. Undo put
+  the title back and left the restored custom field in place.
+- **Fix:** the prior-copy query selects `metafields`; a unit test pins that
+  undo writes them.
+- **Lesson:** when a restore writes a new field, check all four places it
+  must appear (capture, write, comparison, undo copy), and test create,
+  overwrite and undo live.
+- **Detect:** compare the fields in the restore's write input with the
+  fields the prior/undo query selects.
+
 ## 2026-11 · Backup Hero · deleting a product deletes its images
 
 - **Source:** dev-store test of the 2.1.1 fix, and Shopify's docs.

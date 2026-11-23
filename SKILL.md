@@ -89,6 +89,9 @@ Work through these in order. Each step says why it exists.
    repeat the decisive checks against the live URL (the plan-return URL must
    not 404, the plan shows after a reinstall). Backup Hero's audit found the
    fixed iframe gate still 404ing live because the fix wasn't deployed.
+   A quick check that a deploy is live: fetch a page, collect its
+   `/_next/static/…js` scripts, and search them for a string only the new
+   build contains (new copy, say) and one only the old build had.
 
 9. **Write the report and the submission notes** (templates below).
 
@@ -138,6 +141,14 @@ the report: jobs report with confidence either way.
   (or create-then-verify) for every option the UI offers, on a real store.
   "Comes back" includes being published to the same sales channels, stocked
   at the same locations, and linked from the same menus.
+- **Capture, write, compare and undo must agree.** For an app that copies or
+  restores data, every field lives in four places: what the backup captures,
+  what the restore writes, what the comparison checks, and what the copy
+  taken before an overwrite holds for undo. When a restore starts writing a
+  field, the undo copy has to read it too: Backup Hero's undo put a product's
+  title back but not its custom fields, and only a live overwrite-and-undo
+  test showed it. Anything the restore can't write must not be compared, or
+  the record looks changed forever.
 - **A limit only counts as disclosed if the merchant can see it.** Caveats
   in code comments or unused arrays protect no one; show them where the
   merchant chooses or approves.
